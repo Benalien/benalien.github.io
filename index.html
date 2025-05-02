@@ -519,29 +519,13 @@
                     grid.rows = 4;
                     grid.cols = 16;
                     
-                    const cellWidth = (targetWidth - 2 * avgWidth) / grid.cols;
-                    const cellHeight = (targetHeight - 2 * avgHeight) / grid.rows;
-                    
-                    // Step 8: Create grid cells based on the transformed image
+                    // Step 8: Create empty grid cells array
                     grid.cells = [];
-                    
                     for (let i = 0; i < grid.rows; i++) {
                         let rowCells = [];
                         for (let j = 0; j < grid.cols; j++) {
-                            // Calculate cell position in the transformed space
-                            let x = avgWidth + j * cellWidth;
-                            let y = avgHeight + i * cellHeight;
-                            
-                            rowCells.push({
-                                x: x,
-                                y: y,
-                                width: cellWidth,
-                                height: cellHeight,
-                                center: {
-                                    x: x + cellWidth / 2,
-                                    y: y + cellHeight / 2
-                                }
-                            });
+                            // Just create empty placeholders, actual positions will be set in analyzeGridCells
+                            rowCells.push({});
                         }
                         grid.cells.push(rowCells);
                     }
@@ -640,7 +624,7 @@
             }
         }
         
-        // Analyze grid cells to detect filled ones - runs once after calibration
+        // Analyze grid cells to detect filled ones with margin adjustment
         function analyzeGridCells(warpedImage) {
             try {
                 // Apply threshold to create binary image for cell detection
@@ -650,30 +634,58 @@
                 // Reset the drum grid
                 drumGrid = Array(4).fill().map(() => Array(16).fill(0));
                 
-                // Check each cell for filled status
-                for (let i = 0; i < grid.cells.length; i++) {
-                    for (let j = 0; j < grid.cells[i].length; j++) {
+                // Define margins as percentage of the total width/height
+                // You can adjust these values based on your specific template
+                const horizontalMarginPercent = 0.12; // 12% margin on left and right sides
+                const verticalMarginPercent = 0.15;   // 15% margin on top and bottom
+                
+                // Calculate actual grid area
+                const gridStartX = grid.targetWidth * horizontalMarginPercent;
+                const gridEndX = grid.targetWidth * (1 - horizontalMarginPercent);
+                const gridStartY = grid.targetHeight * verticalMarginPercent;
+                const gridEndY = grid.targetHeight * (1 - verticalMarginPercent);
+                
+                // Calculate cell dimensions within the adjusted grid area
+                const actualGridWidth = gridEndX - gridStartX;
+                const actualGridHeight = gridEndY - gridStartY;
+                const cellWidth = actualGridWidth / grid.cols;
+                const cellHeight = actualGridHeight / grid.rows;
+                
+                // Update grid cells based on the new margins
+                for (let i = 0; i < grid.rows; i++) {
+                    for (let j = 0; j < grid.cols; j++) {
+                        // Calculate cell position with margins
+                        const x = gridStartX + j * cellWidth;
+                        const y = gridStartY + i * cellHeight;
+                        
+                        // Update the cell position in the grid
+                        grid.cells[i][j] = {
+                            x: x,
+                            y: y,
+                            width: cellWidth,
+                            height: cellHeight,
+                            center: {
+                                x: x + cellWidth / 2,
+                                y: y + cellHeight / 2
+                            }
+                        };
+                        
+                        // Get center of cell for sampling (focus on inner part of cell)
+                        let centerX = Math.round(x + cellWidth * 0.25);
+                        let centerY = Math.round(y + cellHeight * 0.25);
+                        let centerWidth = Math.round(cellWidth * 0.5);
+                        let centerHeight = Math.round(cellHeight * 0.5);
+                        
+                        // Ensure we stay within image boundaries
+                        centerX = Math.max(0, Math.min(binary.cols - 1, centerX));
+                        centerY = Math.max(0, Math.min(binary.rows - 1, centerY));
+                        centerWidth = Math.min(centerWidth, binary.cols - centerX);
+                        centerHeight = Math.min(centerHeight, binary.rows - centerY);
+                        
+                        // Skip if invalid dimensions
+                        if (centerWidth <= 0 || centerHeight <= 0) continue;
+                        
                         try {
-                            let cell = grid.cells[i][j];
-                            
-                            // Make sure cell has valid dimensions
-                            if (!cell || cell.width <= 0 || cell.height <= 0) continue;
-                            
-                            // Get center of cell for sampling (focus on inner part of cell)
-                            let centerX = Math.round(cell.x + cell.width * 0.25);
-                            let centerY = Math.round(cell.y + cell.height * 0.25);
-                            let centerWidth = Math.round(cell.width * 0.5);
-                            let centerHeight = Math.round(cell.height * 0.5);
-                            
-                            // Ensure we stay within image boundaries
-                            centerX = Math.max(0, Math.min(binary.cols - 1, centerX));
-                            centerY = Math.max(0, Math.min(binary.rows - 1, centerY));
-                            centerWidth = Math.min(centerWidth, binary.cols - centerX);
-                            centerHeight = Math.min(centerHeight, binary.rows - centerY);
-                            
-                            // Skip if invalid dimensions
-                            if (centerWidth <= 0 || centerHeight <= 0) continue;
-                            
                             // Extract the region of interest (ROI)
                             let roi = binary.roi(new cv.Rect(centerX, centerY, centerWidth, centerHeight));
                             
@@ -694,7 +706,6 @@
                             roi.delete();
                         } catch (cellError) {
                             console.error(`Error processing cell [${i},${j}]:`, cellError);
-                            // Continue with the next cell
                         }
                     }
                 }
