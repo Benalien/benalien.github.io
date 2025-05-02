@@ -78,15 +78,6 @@
             color: #333;
             margin: 20px 0;
         }
-        .grid-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 10;
-        }
         #tempo-control {
             display: flex;
             align-items: center;
@@ -125,38 +116,6 @@
             color: #e74c3c;
             font-weight: bold;
         }
-        #template-section {
-            margin: 20px 0;
-            text-align: center;
-        }
-        #template-button {
-            background-color: #3498db;
-        }
-        #template-button:hover {
-            background-color: #2980b9;
-        }
-        #template-container {
-            display: none;
-            margin-top: 15px;
-            border: 1px solid #ddd;
-            padding: 10px;
-            background-color: white;
-        }
-        #template-image {
-            max-width: 100%;
-            height: auto;
-            margin-bottom: 10px;
-        }
-        #download-link {
-            display: inline-block;
-            margin-top: 10px;
-            color: #3498db;
-            text-decoration: none;
-            font-weight: bold;
-        }
-        #download-link:hover {
-            text-decoration: underline;
-        }
     </style>
 </head>
 <body>
@@ -174,18 +133,6 @@
                 <li>Press "Calibrate" to detect the grid</li>
                 <li>Press "Start" to begin playback</li>
             </ul>
-            <p><strong>For best results:</strong> Make sure all four corner registration marks are clearly visible, with good lighting and minimal glare. The improved detection will correct for perspective and uneven lighting.</p>
-        </div>
-        
-        <div id="template-section">
-            <button id="template-button">View Grid Template</button>
-            <div id="template-container">
-                <p>Print this template and fill in the boxes with a dark pen:</p>
-                <canvas id="template-canvas" width="800" height="600"></canvas>
-                <div>
-                    <a id="download-link" href="#" download="drum-grid-template.png">Download Template</a>
-                </div>
-            </div>
         </div>
         
         <div id="video-container">
@@ -229,6 +176,8 @@
         let audioContext;
         let audioBuffers = {};
         let isCalibrated = false;
+        let gridCaptured = false;
+        let capturedImage = null;
         let opencv_loaded = false;
         let samples_loaded = false;
         let grid = {
@@ -246,83 +195,13 @@
             'clap'
         ];
 
-        // Sample file paths - you'll need to provide these audio files
+        // Sample file paths
         const sampleFiles = {
             kick: 'kick.mp3',
             hat: 'hat.mp3',
             snare: 'snare.mp3',
             clap: 'clap.mp3'
         };
-
-        // Function to create and download template
-        function generateTemplate() {
-            const templateCanvas = document.getElementById('template-canvas');
-            const ctx = templateCanvas.getContext('2d');
-            
-            // Set canvas dimensions
-            templateCanvas.width = 800;
-            templateCanvas.height = 600;
-            
-            // Fill white background
-            ctx.fillStyle = 'white';
-            ctx.fillRect(0, 0, templateCanvas.width, templateCanvas.height);
-            
-            // Draw grid
-            const marginX = 50;
-            const marginY = 100;
-            const gridWidth = templateCanvas.width - 2 * marginX;
-            const gridHeight = templateCanvas.height - 2 * marginY;
-            const cellWidth = gridWidth / 16;
-            const cellHeight = gridHeight / 4;
-            
-            // Row labels
-            const rowLabels = ['KICK', 'HAT', 'SNARE', 'CLAP'];
-            
-            ctx.strokeStyle = 'black';
-            ctx.lineWidth = 1;
-            ctx.font = '16px Arial';
-            
-            // Draw column numbers
-            for (let i = 0; i < 16; i++) {
-                ctx.fillStyle = 'black';
-                ctx.fillText((i + 1).toString(), marginX + i * cellWidth + cellWidth/2 - 5, marginY - 20);
-            }
-            
-            // Draw rows and cells
-            for (let row = 0; row < 4; row++) {
-                // Draw row label
-                ctx.fillStyle = 'black';
-                ctx.fillText(rowLabels[row], marginX - 45, marginY + row * cellHeight + cellHeight/2 + 5);
-                
-                for (let col = 0; col < 16; col++) {
-                    const x = marginX + col * cellWidth;
-                    const y = marginY + row * cellHeight;
-                    
-                    // Draw cell
-                    ctx.strokeRect(x, y, cellWidth, cellHeight);
-                }
-            }
-            
-            // Draw registration marks (black squares in corners)
-            const regMarkSize = 30;
-            ctx.fillStyle = 'black';
-            
-            // Top-left
-            ctx.fillRect(marginX - regMarkSize, marginY - regMarkSize, regMarkSize, regMarkSize);
-            
-            // Top-right
-            ctx.fillRect(marginX + gridWidth, marginY - regMarkSize, regMarkSize, regMarkSize);
-            
-            // Bottom-left
-            ctx.fillRect(marginX - regMarkSize, marginY + gridHeight, regMarkSize, regMarkSize);
-            
-            // Bottom-right
-            ctx.fillRect(marginX + gridWidth, marginY + gridHeight, regMarkSize, regMarkSize);
-            
-            // Update download link
-            const downloadLink = document.getElementById('download-link');
-            downloadLink.href = templateCanvas.toDataURL('image/png');
-        }
 
         // Function to start the camera when the user clicks the button
         function startCamera() {
@@ -361,53 +240,7 @@
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 document.getElementById('debug-info').textContent = "Loading audio samples...";
                 
-                // Create a simple oscillator as a fallback for each instrument
-                sampleNames.forEach(name => {
-                    // Frequencies for each instrument (approximate)
-                    let frequency, duration;
-                    switch(name) {
-                        case 'kick':
-                            frequency = 60;
-                            duration = 0.1;
-                            break;
-                        case 'hat':
-                            frequency = 800;
-                            duration = 0.05;
-                            break;
-                        case 'snare':
-                            frequency = 200;
-                            duration = 0.08;
-                            break;
-                        case 'clap':
-                            frequency = 600;
-                            duration = 0.06;
-                            break;
-                    }
-                    
-                    // Create buffer with oscillator
-                    const sampleRate = 44100;
-                    const buffer = audioContext.createBuffer(1, sampleRate * duration, sampleRate);
-                    const data = buffer.getChannelData(0);
-                    
-                    // Fill with simple sine wave
-                    for (let i = 0; i < buffer.length; i++) {
-                        // Quick attack, decay envelope
-                        const envelope = (1 - (i / buffer.length)) * Math.exp(-i / (sampleRate * 0.02));
-                        data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * envelope;
-                    }
-                    
-                    // Store the oscillator buffer
-                    audioBuffers[name] = buffer;
-                    
-                    loadedCount++;
-                    document.getElementById('debug-info').textContent = 
-                        `Created ${loadedCount}/${totalSamples} fallback audio samples`;
-                });
-                
-                samples_loaded = true;
-                document.getElementById('debug-info').textContent = "Fallback audio samples ready";
-                
-                // Try to load actual samples in the background
+                // Load each sample from file
                 sampleNames.forEach(name => {
                     const url = sampleFiles[name]; // Get the file path
                     
@@ -422,10 +255,30 @@
                         .then(audioBuffer => {
                             audioBuffers[name] = audioBuffer;
                             console.log(`Loaded sample: ${name}`);
-                            document.getElementById('debug-info').textContent = `Loaded actual ${name} sample`;
+                            
+                            loadedCount++;
+                            document.getElementById('debug-info').textContent = 
+                                `Loaded ${loadedCount}/${totalSamples} audio samples`;
+                            
+                            if (loadedCount === totalSamples) {
+                                samples_loaded = true;
+                                document.getElementById('debug-info').textContent = "All audio samples loaded";
+                            }
                         })
                         .catch(error => {
-                            console.warn(`Using fallback for ${name}:`, error);
+                            console.error(`Error loading ${name}:`, error);
+                            document.getElementById('debug-info').textContent = 
+                                `Error loading ${name}: ${error.message}`;
+                            
+                            // Create a silent buffer as fallback
+                            const sampleRate = 44100;
+                            const buffer = audioContext.createBuffer(1, sampleRate * 0.01, sampleRate);
+                            audioBuffers[name] = buffer;
+                            
+                            loadedCount++;
+                            if (loadedCount === totalSamples) {
+                                samples_loaded = true;
+                            }
                         });
                 });
                 
@@ -492,8 +345,11 @@
             // Capture current video frame
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
+            // Store this image for later processing
+            capturedImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            
             // Get the image data for processing
-            let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            let imageData = capturedImage;
             
             // Convert to OpenCV format
             let src = cv.matFromImageData(imageData);
@@ -684,13 +540,6 @@
                                 center: {
                                     x: x + cellWidth / 2,
                                     y: y + cellHeight / 2
-                                },
-                                // Store original coordinates by applying inverse transform
-                                original: {
-                                    x: Math.round(x), // We'll calculate these in processFrame
-                                    y: Math.round(y),
-                                    width: Math.round(cellWidth),
-                                    height: Math.round(cellHeight)
                                 }
                             });
                         }
@@ -706,81 +555,53 @@
                     grid.targetWidth = targetWidth;
                     grid.targetHeight = targetHeight;
                     
-                    // Step 9: Draw the transformed grid for visualization
-                    cv.cvtColor(warped, warped, cv.COLOR_GRAY2RGBA);
+                    // Analyze the grid now to detect filled cells
+                    analyzeGridCells(warped);
                     
-                    // Draw cells
+                    // Display visualization
+                    let warpedColor = new cv.Mat();
+                    cv.cvtColor(warped, warpedColor, cv.COLOR_GRAY2RGBA);
+                    
+                    // Draw the grid and show which cells were detected as filled
                     for (let i = 0; i < grid.cells.length; i++) {
                         for (let j = 0; j < grid.cells[i].length; j++) {
                             let cell = grid.cells[i][j];
                             
+                            // Draw base grid cell
                             cv.rectangle(
-                                warped,
+                                warpedColor,
                                 new cv.Point(cell.x, cell.y),
                                 new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                new cv.Scalar(0, 255, 0, 255),
-                                2
+                                new cv.Scalar(255, 255, 255, 255),
+                                1
                             );
                             
-                            // Add row labels (with fixed offsets instead of calculated text size)
-                            if (j === 0) {
-                                let rowName = '';
-                                switch(i) {
-                                    case 0: rowName = 'KICK'; break;
-                                    case 1: rowName = 'HAT'; break;
-                                    case 2: rowName = 'SNARE'; break;
-                                    case 3: rowName = 'CLAP'; break;
-                                }
-                                
-                                // Fixed-size label background rectangle
-                                const textWidth = 80; // Fixed width estimate for text
-                                
+                            // If cell is filled, highlight it
+                            if (drumGrid[i][j] === 1) {
                                 cv.rectangle(
-                                    warped,
-                                    new cv.Point(cell.x - textWidth - 10, cell.y),
-                                    new cv.Point(cell.x - 5, cell.y + cell.height),
-                                    new cv.Scalar(255, 255, 255, 255),
+                                    warpedColor,
+                                    new cv.Point(cell.x, cell.y),
+                                    new cv.Point(cell.x + cell.width, cell.y + cell.height),
+                                    new cv.Scalar(255, 0, 0, 255),
                                     -1 // filled rectangle
-                                );
-                                
-                                // Add text with fixed positioning
-                                cv.putText(
-                                    warped,
-                                    rowName,
-                                    new cv.Point(cell.x - textWidth - 5, cell.y + cell.height/2 + 5),
-                                    cv.FONT_HERSHEY_SIMPLEX,
-                                    0.7, // Fixed text size
-                                    new cv.Scalar(0, 0, 0, 255),
-                                    2 // thickness
-                                );
-                            }
-                            
-                            // Add column labels at top (simplified)
-                            if (i === 0) {
-                                cv.putText(
-                                    warped,
-                                    (j+1).toString(),
-                                    new cv.Point(cell.x + cell.width/2 - 5, cell.y - 10),
-                                    cv.FONT_HERSHEY_SIMPLEX,
-                                    0.5,
-                                    new cv.Scalar(255, 255, 255, 255),
-                                    1
                                 );
                             }
                         }
                     }
                     
                     // Display the result
-                    cv.imshow(outputCanvas, warped);
+                    cv.imshow(outputCanvas, warpedColor);
                     
                     // Clean up
                     warped.delete();
+                    warpedColor.delete();
                     srcTri.delete();
                     dstTri.delete();
                     
                     isCalibrated = true;
+                    gridCaptured = true;
                     document.getElementById('startButton').disabled = false;
-                    document.getElementById('debug-info').textContent = "Calibration successful! Grid created with perspective correction.";
+                    document.getElementById('debug-info').textContent = "Calibration successful! Grid analyzed.";
                     
                 } else {
                     // Not enough registration marks found
@@ -793,7 +614,12 @@
                     alert(`Only found ${registrationMarks.length} registration marks. Ensure all four corner markers are clearly visible.`);
                 }
                 
-                // Clean up
+                // Clean up registration marks
+                registrationMarks.forEach(mark => {
+                    if (mark.contour) mark.contour.delete();
+                });
+                
+                // Clean up other resources
                 gray.delete();
                 binary.delete();
                 hierarchy.delete();
@@ -814,41 +640,12 @@
             }
         }
         
-        // Improved frame processing with perspective correction
-        function processFrame() {
-            if (!isCalibrated || !grid.perspectiveMatrix) return;
-            
+        // Analyze grid cells to detect filled ones - runs once after calibration
+        function analyzeGridCells(warpedImage) {
             try {
-                // Capture current video frame
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
-                // Get the image data
-                let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                
-                // Convert to OpenCV format
-                let src = cv.matFromImageData(imageData);
-                let displayImage = src.clone();
-                let gray = new cv.Mat();
-                
-                // Convert to grayscale
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                
-                // Apply perspective transformation
-                let warped = new cv.Mat();
-                cv.warpPerspective(
-                    gray,
-                    warped,
-                    grid.perspectiveMatrix,
-                    new cv.Size(grid.targetWidth, grid.targetHeight)
-                );
-                
-                // Apply Gaussian blur to reduce noise
-                cv.GaussianBlur(warped, warped, new cv.Size(5, 5), 0);
-                
-                // Apply adaptive threshold to handle uneven lighting better
+                // Apply threshold to create binary image for cell detection
                 let binary = new cv.Mat();
-                cv.adaptiveThreshold(warped, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                    cv.THRESH_BINARY_INV, 11, 2);
+                cv.threshold(warpedImage, binary, detectionThreshold, 255, cv.THRESH_BINARY_INV);
                 
                 // Reset the drum grid
                 drumGrid = Array(4).fill().map(() => Array(16).fill(0));
@@ -885,12 +682,11 @@
                             let whitePixels = cv.countNonZero(roi);
                             let fillPercentage = (whitePixels / totalPixels) * 100;
                             
-                            // Use the detection threshold to adjust sensitivity
-                            // Higher threshold = less sensitive
-                            const sensitivityThreshold = 20 - (detectionThreshold / 10);
+                            // Debug: console.log(`Cell [${i},${j}]: ${fillPercentage.toFixed(1)}% filled`);
                             
                             // Determine if the cell is filled based on percentage of white pixels
-                            if (fillPercentage > sensitivityThreshold) {
+                            // Lower threshold to catch marks that might be missed
+                            if (fillPercentage > 10) { // Consider filled if more than 10% of pixels are white
                                 // Cell is filled
                                 drumGrid[i][j] = 1;
                             }
@@ -903,11 +699,42 @@
                     }
                 }
                 
-                // Create a color version of warped for display
+                // Clean up
+                binary.delete();
+                
+            } catch (e) {
+                console.error("Error analyzing grid cells:", e);
+                document.getElementById('debug-info').textContent = "Error analyzing cells: " + e.message;
+                document.getElementById('debug-info').className = "error";
+            }
+        }
+        
+        // Draw current playback state
+        function drawPlaybackState() {
+            if (!isCalibrated || !grid.perspectiveMatrix || !gridCaptured) return;
+            
+            try {
+                // Create a warped version of the image for display
+                let warped = new cv.Mat();
+                let src = cv.matFromImageData(capturedImage);
+                let gray = new cv.Mat();
+                
+                // Convert to grayscale
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                
+                // Apply perspective transformation
+                cv.warpPerspective(
+                    gray,
+                    warped,
+                    grid.perspectiveMatrix,
+                    new cv.Size(grid.targetWidth, grid.targetHeight)
+                );
+                
+                // Convert to color for display
                 let warpedColor = new cv.Mat();
                 cv.cvtColor(warped, warpedColor, cv.COLOR_GRAY2RGBA);
                 
-                // Draw the grid and highlight filled cells
+                // Draw the grid and highlight filled cells and current step
                 for (let i = 0; i < grid.cells.length; i++) {
                     for (let j = 0; j < grid.cells[i].length; j++) {
                         try {
@@ -918,7 +745,7 @@
                                 warpedColor,
                                 new cv.Point(cell.x, cell.y),
                                 new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                new cv.Scalar(255, 255, 255, 0.3),
+                                new cv.Scalar(255, 255, 255, 255),
                                 1
                             );
                             
@@ -928,7 +755,7 @@
                                     warpedColor,
                                     new cv.Point(cell.x, cell.y),
                                     new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                    new cv.Scalar(255, 0, 0, 0.5),
+                                    new cv.Scalar(255, 0, 0, 255),
                                     -1 // filled rectangle
                                 );
                             }
@@ -939,8 +766,8 @@
                                     warpedColor,
                                     new cv.Point(cell.x, cell.y),
                                     new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                    new cv.Scalar(255, 255, 0, 0.5),
-                                    2
+                                    new cv.Scalar(255, 255, 0, 255),
+                                    3
                                 );
                             }
                         } catch (drawError) {
@@ -954,16 +781,13 @@
                 
                 // Cleanup
                 src.delete();
-                displayImage.delete();
                 gray.delete();
                 warped.delete();
-                binary.delete();
                 warpedColor.delete();
                 
             } catch (e) {
-                console.error("Error in processFrame:", e);
-                document.getElementById('debug-info').textContent = "Playback error: " + e.message;
-                document.getElementById('debug-info').className = "error";
+                console.error("Error drawing playback state:", e);
+                document.getElementById('debug-info').textContent = "Drawing error: " + e.message;
             }
         }
         
@@ -997,8 +821,8 @@
         // Main playback loop
         function playStep() {
             try {
-                // Process the current video frame to update the drum grid
-                processFrame();
+                // Update visualization to show current step
+                drawPlaybackState();
                 
                 // Play sounds based on the drum grid state
                 for (let i = 0; i < drumGrid.length; i++) {
@@ -1090,6 +914,40 @@
         function updateDetectionThreshold() {
             detectionThreshold = document.getElementById('detectionThreshold').value;
             document.getElementById('thresholdValue').textContent = detectionThreshold;
+            
+            // If grid is already calibrated, reanalyze with the new threshold
+            if (isCalibrated && capturedImage) {
+                try {
+                    // Re-analyze the still image with the new threshold
+                    let src = cv.matFromImageData(capturedImage);
+                    let gray = new cv.Mat();
+                    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                    
+                    // Apply the stored perspective transform
+                    let warped = new cv.Mat();
+                    cv.warpPerspective(
+                        gray,
+                        warped,
+                        grid.perspectiveMatrix,
+                        new cv.Size(grid.targetWidth, grid.targetHeight)
+                    );
+                    
+                    // Analyze the grid with the new threshold
+                    analyzeGridCells(warped);
+                    
+                    // Update display
+                    drawPlaybackState();
+                    
+                    // Clean up
+                    src.delete();
+                    gray.delete();
+                    warped.delete();
+                    
+                    document.getElementById('debug-info').textContent = "Detection threshold updated";
+                } catch (e) {
+                    console.error("Error updating detection threshold:", e);
+                }
+            }
         }
         
         // Initialize when page loads
@@ -1103,17 +961,6 @@
             // Add event listeners for buttons and sliders
             document.getElementById('cameraButton').addEventListener('click', startCamera);
             document.getElementById('calibrateButton').addEventListener('click', calibrate);
-            
-            // Show/hide template
-            document.getElementById('template-button').addEventListener('click', function() {
-                const templateContainer = document.getElementById('template-container');
-                if (templateContainer.style.display === 'none' || templateContainer.style.display === '') {
-                    templateContainer.style.display = 'block';
-                    generateTemplate();
-                } else {
-                    templateContainer.style.display = 'none';
-                }
-            });
             
             // Modify the start button to initialize audio context
             const startButton = document.getElementById('startButton');
