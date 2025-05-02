@@ -329,7 +329,7 @@
             }
         }
         
-        // Fixed calibration function that doesn't use cv.getTextSize
+        // Direct cell detection calibration function
         function calibrate() {
             if (!video.videoWidth) {
                 alert("Camera not ready yet. Please wait a moment.");
@@ -515,77 +515,213 @@
                         new cv.Size(targetWidth, targetHeight) // output size
                     );
                     
-                    // Step 7: Define grid dimensions and cell size
-                    grid.rows = 4;
-                    grid.cols = 16;
-                    
-                    // Step 8: Create empty grid cells array
-                    grid.cells = [];
-                    for (let i = 0; i < grid.rows; i++) {
-                        let rowCells = [];
-                        for (let j = 0; j < grid.cols; j++) {
-                            // Just create empty placeholders, actual positions will be set in analyzeGridCells
-                            rowCells.push({});
-                        }
-                        grid.cells.push(rowCells);
-                    }
-                    
-                    // Store perspective matrix for use in processFrame
+                    // Store perspective matrix and dimensions for use in processFrame
                     grid.perspectiveMatrix = perspectiveMatrix;
-                    grid.inverseMatrix = new cv.Mat();
-                    cv.invert(perspectiveMatrix, grid.inverseMatrix);
-                    
-                    // Store target dimensions
                     grid.targetWidth = targetWidth;
                     grid.targetHeight = targetHeight;
                     
-                    // Analyze the grid now to detect filled cells
-                    analyzeGridCells(warped);
+                    // Step 7: Now detect all grid cells directly as contours
+                    let warpedBinary = new cv.Mat();
+                    cv.adaptiveThreshold(warped, warpedBinary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
                     
-                    // Display visualization
-                    let warpedColor = new cv.Mat();
-                    cv.cvtColor(warped, warpedColor, cv.COLOR_GRAY2RGBA);
+                    let cellContours = new cv.MatVector();
+                    let cellHierarchy = new cv.Mat();
+                    cv.findContours(warpedBinary, cellContours, cellHierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
                     
-                    // Draw the grid and show which cells were detected as filled
-                    for (let i = 0; i < grid.cells.length; i++) {
-                        for (let j = 0; j < grid.cells[i].length; j++) {
-                            let cell = grid.cells[i][j];
+                    // Filter contours to find grid cells
+                    let gridCells = [];
+                    const cellMinArea = (targetWidth * targetHeight) * 0.001; // Min area as % of image
+                    const cellMaxArea = (targetWidth * targetHeight) * 0.01;  // Max area as % of image
+                    
+                    for (let i = 0; i < cellContours.size(); i++) {
+                        let cnt = cellContours.get(i);
+                        let area = cv.contourArea(cnt);
+                        
+                        if (area > cellMinArea && area < cellMaxArea) {
+                            // Check if it's approximately square
+                            let peri = cv.arcLength(cnt, true);
+                            let approx = new cv.Mat();
+                            cv.approxPolyDP(cnt, approx, 0.04 * peri, true);
                             
-                            // Draw base grid cell
-                            cv.rectangle(
-                                warpedColor,
-                                new cv.Point(cell.x, cell.y),
-                                new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                new cv.Scalar(255, 255, 255, 255),
-                                1
-                            );
+                            // Grid cells should be roughly square (4 vertices)
+                            if (approx.rows == 4) {
+                                let rect = cv.boundingRect(cnt);
+                                let aspectRatio = rect.width / rect.height;
+                                
+                                // Square aspect ratio should be close to 1
+                                if (aspectRatio > 0.7 && aspectRatio < 1.3) {
+                                    // Calculate center point
+                                    let M = cv.moments(cnt);
+                                    let cx = M.m10 / M.m00;
+                                    let cy = M.m01 / M.m00;
+                                    
+                                    gridCells.push({
+                                        center: { x: cx, y: cy },
+                                        rect: rect,
+                                        area: area
+                                    });
+                                }
+                            }
+                            approx.delete();
+                        }
+                    }
+                    
+                    console.log(`Found ${gridCells.length} potential grid cells`);
+                    
+                    // We expect to find approximately 64 cells (4x16 grid)
+                    if (gridCells.length >= 60) {  // Allow for some detection errors
+                        // Sort cells by y-coordinate (row)
+                        gridCells.sort((a, b) => a.center.y - b.center.y);
+                        
+                        // Identify rows based on y-coordinate clusters
+                        let rows = [];
+                        let currentRow = [gridCells[0]];
+                        let avgHeight = gridCells.reduce((sum, cell) => sum + cell.rect.height, 0) / gridCells.length;
+                        
+                        for (let i = 1; i < gridCells.length; i++) {
+                            if (Math.abs(gridCells[i].center.y - gridCells[i-1].center.y) < avgHeight * 0.5) {
+                                // Same row
+                                currentRow.push(gridCells[i]);
+                            } else {
+                                // New row
+                                if (currentRow.length > 0) {
+                                    rows.push(currentRow);
+                                    currentRow = [gridCells[i]];
+                                }
+                            }
+                        }
+                        
+                        // Add the last row
+                        if (currentRow.length > 0) {
+                            rows.push(currentRow);
+                        }
+                        
+                        // Take the 4 rows with most cells (should correspond to our 4 rows)
+                        rows.sort((a, b) => b.length - a.length);
+                        rows = rows.slice(0, 4);
+                        
+                        // Sort each row by x-coordinate
+                        rows.forEach(row => {
+                            row.sort((a, b) => a.center.x - b.center.x);
+                        });
+                        
+                        // Now we have rows and columns - create a proper 4x16 grid
+                        grid.rows = 4;
+                        grid.cols = 16;
+                        grid.cells = [];
+                        
+                        // Reset the drum grid to be filled
+                        drumGrid = Array(4).fill().map(() => Array(16).fill(0));
+                        
+                        for (let i = 0; i < Math.min(rows.length, 4); i++) {
+                            let row = rows[i];
+                            let rowCells = [];
                             
-                            // If cell is filled, highlight it
-                            if (drumGrid[i][j] === 1) {
+                            // Either use detected cells or create placeholder cells
+                            for (let j = 0; j < 16; j++) {
+                                if (j < row.length) {
+                                    // Use detected cell
+                                    let cell = row[j];
+                                    rowCells.push({
+                                        x: cell.rect.x,
+                                        y: cell.rect.y,
+                                        width: cell.rect.width,
+                                        height: cell.rect.height,
+                                        center: cell.center
+                                    });
+                                } else {
+                                    // Create placeholder cell (should not normally happen)
+                                    rowCells.push({
+                                        x: 0,
+                                        y: 0,
+                                        width: 0,
+                                        height: 0,
+                                        center: { x: 0, y: 0 }
+                                    });
+                                }
+                            }
+                            
+                            grid.cells.push(rowCells);
+                        }
+                        
+                        // Now analyze the grid to find filled cells
+                        analyzeGridCells(warped);
+                        
+                        // Display visualization
+                        let warpedColor = new cv.Mat();
+                        cv.cvtColor(warped, warpedColor, cv.COLOR_GRAY2RGBA);
+                        
+                        // Draw the grid and show which cells were detected as filled
+                        for (let i = 0; i < grid.cells.length; i++) {
+                            for (let j = 0; j < grid.cells[i].length; j++) {
+                                let cell = grid.cells[i][j];
+                                
+                                // Draw base grid cell
                                 cv.rectangle(
                                     warpedColor,
                                     new cv.Point(cell.x, cell.y),
                                     new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                    new cv.Scalar(255, 0, 0, 255),
-                                    -1 // filled rectangle
+                                    new cv.Scalar(255, 255, 255, 255),
+                                    1
                                 );
+                                
+                                // If cell is filled, highlight it
+                                if (drumGrid[i][j] === 1) {
+                                    cv.rectangle(
+                                        warpedColor,
+                                        new cv.Point(cell.x, cell.y),
+                                        new cv.Point(cell.x + cell.width, cell.y + cell.height),
+                                        new cv.Scalar(255, 0, 0, 255),
+                                        -1 // filled rectangle
+                                    );
+                                }
                             }
                         }
+                        
+                        // Display the result
+                        cv.imshow(outputCanvas, warpedColor);
+                        
+                        // Clean up
+                        warpedColor.delete();
+                        
+                        isCalibrated = true;
+                        gridCaptured = true;
+                        document.getElementById('startButton').disabled = false;
+                        document.getElementById('debug-info').textContent = "Calibration successful! Found and analyzed " + gridCells.length + " grid cells.";
+                        
+                    } else {
+                        // Not enough grid cells found
+                        document.getElementById('debug-info').textContent = `Only found ${gridCells.length} grid cells, expected around 64`;
+                        document.getElementById('debug-info').className = "error";
+                        
+                        // Show what we found for debugging
+                        let warpedColor = new cv.Mat();
+                        cv.cvtColor(warped, warpedColor, cv.COLOR_GRAY2RGBA);
+                        
+                        // Draw the detected cells
+                        gridCells.forEach(cell => {
+                            cv.rectangle(
+                                warpedColor,
+                                new cv.Point(cell.rect.x, cell.rect.y),
+                                new cv.Point(cell.rect.x + cell.rect.width, cell.rect.y + cell.rect.height),
+                                new cv.Scalar(0, 255, 0, 255),
+                                2
+                            );
+                        });
+                        
+                        cv.imshow(outputCanvas, warpedColor);
+                        warpedColor.delete();
+                        
+                        alert("Not enough grid cells detected. Please ensure good lighting and that the grid is clearly visible.");
                     }
                     
-                    // Display the result
-                    cv.imshow(outputCanvas, warpedColor);
-                    
                     // Clean up
+                    warpedBinary.delete();
+                    cellContours.delete();
+                    cellHierarchy.delete();
                     warped.delete();
-                    warpedColor.delete();
                     srcTri.delete();
                     dstTri.delete();
-                    
-                    isCalibrated = true;
-                    gridCaptured = true;
-                    document.getElementById('startButton').disabled = false;
-                    document.getElementById('debug-info').textContent = "Calibration successful! Grid analyzed.";
                     
                 } else {
                     // Not enough registration marks found
@@ -624,68 +760,40 @@
             }
         }
         
-        // Analyze grid cells to detect filled ones with margin adjustment
+        // Analyze grid cells to detect filled ones
         function analyzeGridCells(warpedImage) {
             try {
-                // Apply threshold to create binary image for cell detection
+                // Create a binary image for cell content analysis
                 let binary = new cv.Mat();
                 cv.threshold(warpedImage, binary, detectionThreshold, 255, cv.THRESH_BINARY_INV);
                 
                 // Reset the drum grid
                 drumGrid = Array(4).fill().map(() => Array(16).fill(0));
                 
-                // Define margins as percentage of the total width/height
-                // You can adjust these values based on your specific template
-                const horizontalMarginPercent = 0.12; // 12% margin on left and right sides
-                const verticalMarginPercent = 0.15;   // 15% margin on top and bottom
-                
-                // Calculate actual grid area
-                const gridStartX = grid.targetWidth * horizontalMarginPercent;
-                const gridEndX = grid.targetWidth * (1 - horizontalMarginPercent);
-                const gridStartY = grid.targetHeight * verticalMarginPercent;
-                const gridEndY = grid.targetHeight * (1 - verticalMarginPercent);
-                
-                // Calculate cell dimensions within the adjusted grid area
-                const actualGridWidth = gridEndX - gridStartX;
-                const actualGridHeight = gridEndY - gridStartY;
-                const cellWidth = actualGridWidth / grid.cols;
-                const cellHeight = actualGridHeight / grid.rows;
-                
-                // Update grid cells based on the new margins
-                for (let i = 0; i < grid.rows; i++) {
-                    for (let j = 0; j < grid.cols; j++) {
-                        // Calculate cell position with margins
-                        const x = gridStartX + j * cellWidth;
-                        const y = gridStartY + i * cellHeight;
-                        
-                        // Update the cell position in the grid
-                        grid.cells[i][j] = {
-                            x: x,
-                            y: y,
-                            width: cellWidth,
-                            height: cellHeight,
-                            center: {
-                                x: x + cellWidth / 2,
-                                y: y + cellHeight / 2
-                            }
-                        };
-                        
-                        // Get center of cell for sampling (focus on inner part of cell)
-                        let centerX = Math.round(x + cellWidth * 0.25);
-                        let centerY = Math.round(y + cellHeight * 0.25);
-                        let centerWidth = Math.round(cellWidth * 0.5);
-                        let centerHeight = Math.round(cellHeight * 0.5);
-                        
-                        // Ensure we stay within image boundaries
-                        centerX = Math.max(0, Math.min(binary.cols - 1, centerX));
-                        centerY = Math.max(0, Math.min(binary.rows - 1, centerY));
-                        centerWidth = Math.min(centerWidth, binary.cols - centerX);
-                        centerHeight = Math.min(centerHeight, binary.rows - centerY);
-                        
-                        // Skip if invalid dimensions
-                        if (centerWidth <= 0 || centerHeight <= 0) continue;
-                        
+                // For each cell, check if it's filled
+                for (let i = 0; i < grid.cells.length; i++) {
+                    for (let j = 0; j < grid.cells[i].length; j++) {
                         try {
+                            let cell = grid.cells[i][j];
+                            
+                            // Skip invalid cells
+                            if (!cell || !cell.width || cell.width <= 0 || !cell.height || cell.height <= 0) continue;
+                            
+                            // Get center of cell for sampling (focus on inner part of cell)
+                            let centerX = Math.round(cell.x + cell.width * 0.25);
+                            let centerY = Math.round(cell.y + cell.height * 0.25);
+                            let centerWidth = Math.round(cell.width * 0.5);
+                            let centerHeight = Math.round(cell.height * 0.5);
+                            
+                            // Ensure we stay within image boundaries
+                            centerX = Math.max(0, Math.min(binary.cols - 1, centerX));
+                            centerY = Math.max(0, Math.min(binary.rows - 1, centerY));
+                            centerWidth = Math.min(centerWidth, binary.cols - centerX);
+                            centerHeight = Math.min(centerHeight, binary.rows - centerY);
+                            
+                            // Skip if invalid dimensions
+                            if (centerWidth <= 0 || centerHeight <= 0) continue;
+                            
                             // Extract the region of interest (ROI)
                             let roi = binary.roi(new cv.Rect(centerX, centerY, centerWidth, centerHeight));
                             
@@ -697,7 +805,6 @@
                             // Debug: console.log(`Cell [${i},${j}]: ${fillPercentage.toFixed(1)}% filled`);
                             
                             // Determine if the cell is filled based on percentage of white pixels
-                            // Lower threshold to catch marks that might be missed
                             if (fillPercentage > 10) { // Consider filled if more than 10% of pixels are white
                                 // Cell is filled
                                 drumGrid[i][j] = 1;
@@ -750,6 +857,9 @@
                     for (let j = 0; j < grid.cells[i].length; j++) {
                         try {
                             let cell = grid.cells[i][j];
+                            
+                            // Skip invalid cells
+                            if (!cell || !cell.width || cell.width <= 0 || !cell.height || cell.height <= 0) continue;
                             
                             // Draw base cell
                             cv.rectangle(
