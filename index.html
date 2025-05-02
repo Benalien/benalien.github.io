@@ -294,33 +294,40 @@
         
         // Initialize audio context on user interaction
         function initAudioContext() {
-            if (!audioContext) {
-                try {
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    console.log('AudioContext created:', audioContext.state);
-                    
-                    // Load audio samples after creating context
-                    loadAudioSamples();
-                } catch (e) {
-                    console.error('Failed to create AudioContext:', e);
-                    document.getElementById('debug-info').textContent = "Failed to create AudioContext";
-                    document.getElementById('debug-info').className = "error";
-                }
-            } else if (audioContext.state === 'suspended') {
-                audioContext.resume().then(() => {
-                    console.log('AudioContext resumed');
-                });
-            }
+    if (!audioContext) {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            console.log('AudioContext created:', audioContext.state);
+            
+            // Set samples_loaded to true to avoid blocking UI
+            samples_loaded = true;
+            
+            // Load audio samples after creating context
+            loadAudioSamples();
+        } catch (e) {
+            console.error('Failed to create AudioContext:', e);
+            document.getElementById('debug-info').textContent = "Failed to create AudioContext";
+            document.getElementById('debug-info').className = "error";
+            
+            // Still mark samples as loaded to avoid blocking UI
+            samples_loaded = true;
         }
+    } else if (audioContext.state === 'suspended') {
+        audioContext.resume().then(() => {
+            console.log('AudioContext resumed');
+        });
+    }
+}
         
         // Check if everything is loaded
         function checkAllLoaded() {
-            if (opencv_loaded && samples_loaded) {
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('cameraButton').disabled = false;
-                document.getElementById('debug-info').textContent = "Ready! Press 'Start Camera' to begin.";
-            }
-        }
+    // Enable camera button as soon as OpenCV is loaded, even if samples aren't loaded yet
+    if (opencv_loaded) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('cameraButton').disabled = false;
+        document.getElementById('debug-info').textContent = "OpenCV ready! Press 'Start Camera' to begin.";
+    }
+}
         
         // Simplified and more robust calibrate function
         function calibrate() {
