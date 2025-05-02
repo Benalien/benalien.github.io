@@ -119,6 +119,11 @@
             margin-top: 10px;
             font-size: 14px;
             color: #666;
+            height: 20px;
+        }
+        .error {
+            color: #e74c3c;
+            font-weight: bold;
         }
     </style>
 </head>
@@ -216,10 +221,16 @@
                 })
                     .then(function(stream) {
                         video.srcObject = stream;
-                        document.getElementById('calibrateButton').disabled = false;
+                        // Add a short delay before enabling the calibrate button
+                        // to ensure video is fully initialized
+                        setTimeout(() => {
+                            document.getElementById('calibrateButton').disabled = false;
+                        }, 1000);
                     })
                     .catch(function(error) {
                         console.error("Error accessing camera:", error);
+                        document.getElementById('debug-info').textContent = "Camera error: " + error.message;
+                        document.getElementById('debug-info').className = "error";
                         alert("Could not access camera. Please ensure camera permissions are enabled in your browser settings and try again.");
                     });
             } else {
@@ -264,10 +275,12 @@
                             },
                             function(error) {
                                 console.error('Error decoding audio data for ' + name + ':', error);
+                                document.getElementById('debug-info').textContent = `Error loading ${name} sample`;
                             }
                         );
                     } catch (error) {
                         console.error('Error processing base64 data for ' + name + ':', error);
+                        document.getElementById('debug-info').textContent = `Error processing ${name} sample`;
                     }
                 }
                 
@@ -278,6 +291,8 @@
                 
             } catch(e) {
                 console.error('Web Audio API is not supported in this browser', e);
+                document.getElementById('debug-info').textContent = "Audio API not supported";
+                document.getElementById('debug-info').className = "error";
             }
         }
         
@@ -292,6 +307,8 @@
                     loadAudioSamples();
                 } catch (e) {
                     console.error('Failed to create AudioContext:', e);
+                    document.getElementById('debug-info').textContent = "Failed to create AudioContext";
+                    document.getElementById('debug-info').className = "error";
                 }
             } else if (audioContext.state === 'suspended') {
                 audioContext.resume().then(() => {
@@ -305,10 +322,11 @@
             if (opencv_loaded && samples_loaded) {
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('cameraButton').disabled = false;
+                document.getElementById('debug-info').textContent = "Ready! Press 'Start Camera' to begin.";
             }
         }
         
-        // Improved calibrate function with registration mark detection
+        // Simplified and more robust calibrate function
         function calibrate() {
             if (!video.videoWidth) {
                 alert("Camera not ready yet. Please wait a moment.");
@@ -336,205 +354,211 @@
                 // Convert to grayscale
                 cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
                 
-                // Apply bilateral filter to reduce noise while preserving edges
-                cv.bilateralFilter(dst, dst, 9, 75, 75);
+                // Basic image processing, trying to avoid advanced operations that might cause errors
+                cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0);
+                cv.threshold(dst, dst, 0, 255, cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
                 
-                // Apply adaptive threshold to get binary image
-                cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
-                
-                // Apply morphological operations to enhance structures
-                let kernel = cv.Mat.ones(3, 3, cv.CV_8U);
-                cv.morphologyEx(dst, dst, cv.MORPH_CLOSE, kernel);
-                cv.morphologyEx(dst, dst, cv.MORPH_OPEN, kernel);
-                kernel.delete();
-                
-                // Find contours
+                // Find contours with careful cleanup
                 let contours = new cv.MatVector();
                 let hierarchy = new cv.Mat();
-                cv.findContours(dst, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
                 
-                // First, look for registration marks (they should be larger squares with distinct internal patterns)
-                let registrationMarks = [];
-                const regMarkMinArea = canvas.width * canvas.height * 0.001; // 0.1% of image area
-                
-                for (let i = 0; i < contours.size(); ++i) {
-                    let cnt = contours.get(i);
-                    let area = cv.contourArea(cnt);
+                try {
+                    cv.findContours(dst, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
                     
-                    // Registration marks should be larger than regular cells
-                    if (area > regMarkMinArea) {
-                        let perimeter = cv.arcLength(cnt, true);
-                        let approx = new cv.Mat();
-                        cv.approxPolyDP(cnt, approx, 0.05 * perimeter, true);
-                        
-                        // Registration marks should be approximately square (4 corners)
-                        if (approx.rows === 4) {
-                            let rect = cv.boundingRect(cnt);
-                            let aspectRatio = rect.width / rect.height;
+                    // Look for possible grid cells (simpler approach)
+                    let gridCells = [];
+                    
+                    // Get image dimensions for relative size calculations
+                    const imgArea = dst.rows * dst.cols;
+                    const minCellArea = imgArea * 0.0005; // 0.05% of image
+                    const maxCellArea = imgArea * 0.01;   // 1% of image
+                    
+                    console.log(`Looking for cells with area between ${minCellArea} and ${maxCellArea} pixels`);
+                    document.getElementById('debug-info').textContent = `Scanning for cells between ${minCellArea.toFixed(0)}-${maxCellArea.toFixed(0)} px²`;
+                    
+                    // Find possible cell candidates
+                    for (let i = 0; i < contours.size(); i++) {
+                        try {
+                            let cnt = contours.get(i);
+                            let area = cv.contourArea(cnt);
                             
-                            // Check aspect ratio to ensure it's roughly square
-                            if (aspectRatio > 0.8 && aspectRatio < 1.2) {
-                                registrationMarks.push({
-                                    x: rect.x,
-                                    y: rect.y,
-                                    width: rect.width,
-                                    height: rect.height,
-                                    center: {
-                                        x: rect.x + rect.width / 2,
-                                        y: rect.y + rect.height / 2
-                                    }
-                                });
+                            if (area > minCellArea && area < maxCellArea) {
+                                let rect = cv.boundingRect(cnt);
                                 
-                                // Draw registration mark for visualization
-                                cv.rectangle(displayMat, 
-                                    new cv.Point(rect.x, rect.y), 
-                                    new cv.Point(rect.x + rect.width, rect.y + rect.height), 
-                                    new cv.Scalar(255, 0, 0, 255), 3);
+                                // Ensure rect is entirely within image bounds
+                                if (rect.x >= 0 && rect.y >= 0 && 
+                                    rect.x + rect.width < dst.cols && 
+                                    rect.y + rect.height < dst.rows) {
+                                    
+                                    let aspectRatio = rect.width / rect.height;
+                                    if (aspectRatio > 0.7 && aspectRatio < 1.3) {
+                                        gridCells.push({
+                                            x: rect.x,
+                                            y: rect.y,
+                                            width: rect.width,
+                                            height: rect.height,
+                                            center: {
+                                                x: rect.x + rect.width / 2,
+                                                y: rect.y + rect.height / 2
+                                            }
+                                        });
+                                        
+                                        // Draw for visualization
+                                        cv.rectangle(displayMat, 
+                                            new cv.Point(rect.x, rect.y), 
+                                            new cv.Point(rect.x + rect.width, rect.y + rect.height), 
+                                            new cv.Scalar(0, 255, 0, 255), 2);
+                                    }
+                                }
                             }
+                        } catch (contourError) {
+                            console.error("Error processing contour:", contourError);
+                            continue; // Skip this contour and continue with the next
                         }
-                        approx.delete();
                     }
-                }
-                
-                document.getElementById('debug-info').textContent = `Found ${registrationMarks.length} potential registration marks`;
-                
-                // We need at least 4 registration marks (one at each corner)
-                if (registrationMarks.length >= 4) {
-                    // Sort registration marks by position to identify corners
-                    // Calculate centroid
-                    let centroidX = registrationMarks.reduce((sum, mark) => sum + mark.center.x, 0) / registrationMarks.length;
-                    let centroidY = registrationMarks.reduce((sum, mark) => sum + mark.center.y, 0) / registrationMarks.length;
                     
-                    // Identify corner marks
-                    let topLeft = null;
-                    let topRight = null;
-                    let bottomLeft = null;
-                    let bottomRight = null;
+                    console.log(`Found ${gridCells.length} potential grid cells`);
+                    document.getElementById('debug-info').textContent = `Found ${gridCells.length} potential cells`;
                     
-                    registrationMarks.forEach(mark => {
-                        if (mark.center.x < centroidX && mark.center.y < centroidY) {
-                            // Top-left quadrant
-                            if (!topLeft || 
-                                Math.hypot(mark.center.x - centroidX, mark.center.y - centroidY) > 
-                                Math.hypot(topLeft.center.x - centroidX, topLeft.center.y - centroidY)) {
-                                topLeft = mark;
-                            }
-                        } else if (mark.center.x >= centroidX && mark.center.y < centroidY) {
-                            // Top-right quadrant
-                            if (!topRight || 
-                                Math.hypot(mark.center.x - centroidX, mark.center.y - centroidY) > 
-                                Math.hypot(topRight.center.x - centroidX, topRight.center.y - centroidY)) {
-                                topRight = mark;
-                            }
-                        } else if (mark.center.x < centroidX && mark.center.y >= centroidY) {
-                            // Bottom-left quadrant
-                            if (!bottomLeft || 
-                                Math.hypot(mark.center.x - centroidX, mark.center.y - centroidY) > 
-                                Math.hypot(bottomLeft.center.x - centroidX, bottomLeft.center.y - centroidY)) {
-                                bottomLeft = mark;
-                            }
-                        } else {
-                            // Bottom-right quadrant
-                            if (!bottomRight || 
-                                Math.hypot(mark.center.x - centroidX, mark.center.y - centroidY) > 
-                                Math.hypot(bottomRight.center.x - centroidX, bottomRight.center.y - centroidY)) {
-                                bottomRight = mark;
+                    // Simple manual grid creation if enough cells found
+                    if (gridCells.length > 0) {
+                        // Sort by y-coordinate to identify rows
+                        gridCells.sort((a, b) => a.center.y - b.center.y);
+                        
+                        // Calculate average cell height
+                        const avgHeight = gridCells.reduce((sum, cell) => sum + cell.height, 0) / gridCells.length;
+                        
+                        // Group into rows (simplified approach)
+                        let rows = [];
+                        let currentRow = [gridCells[0]];
+                        
+                        for (let i = 1; i < gridCells.length; i++) {
+                            // If vertical distance is less than 75% of average height, same row
+                            if (Math.abs(gridCells[i].center.y - gridCells[i-1].center.y) < avgHeight * 0.75) {
+                                currentRow.push(gridCells[i]);
+                            } else {
+                                // New row
+                                rows.push(currentRow);
+                                currentRow = [gridCells[i]];
                             }
                         }
-                    });
-                    
-                    // We now have the four corner registration marks
-                    if (topLeft && topRight && bottomLeft && bottomRight) {
-                        // Label for visual debugging
-                        cv.putText(displayMat, "TL", new cv.Point(topLeft.center.x, topLeft.center.y), 
-                            cv.FONT_HERSHEY_SIMPLEX, 1, new cv.Scalar(0, 255, 0, 255), 2);
-                        cv.putText(displayMat, "TR", new cv.Point(topRight.center.x, topRight.center.y), 
-                            cv.FONT_HERSHEY_SIMPLEX, 1, new cv.Scalar(0, 255, 0, 255), 2);
-                        cv.putText(displayMat, "BL", new cv.Point(bottomLeft.center.x, bottomLeft.center.y), 
-                            cv.FONT_HERSHEY_SIMPLEX, 1, new cv.Scalar(0, 255, 0, 255), 2);
-                        cv.putText(displayMat, "BR", new cv.Point(bottomRight.center.x, bottomRight.center.y), 
-                            cv.FONT_HERSHEY_SIMPLEX, 1, new cv.Scalar(0, 255, 0, 255), 2);
                         
-                        // Now we can create the grid using the registration marks
+                        // Add the last row
+                        if (currentRow.length > 0) {
+                            rows.push(currentRow);
+                        }
+                        
+                        console.log(`Found ${rows.length} rows`);
+                        
+                        // Sort each row by x-coordinate
+                        rows.forEach(row => {
+                            row.sort((a, b) => a.center.x - b.center.x);
+                        });
+                        
+                        // Take up to 4 rows
+                        let selectedRows = rows.slice(0, 4);
+                        
+                        // Create a fully defined grid with inferred cells
                         grid.cells = [];
                         
-                        // For each row (0 to 3)
-                        for (let row = 0; row < 4; row++) {
+                        for (let i = 0; i < 4; i++) {
+                            let row = (i < selectedRows.length) ? selectedRows[i] : null;
                             let rowCells = [];
                             
-                            // For each column (0 to 15)
-                            for (let col = 0; col < 16; col++) {
-                                // Calculate cell position using perspective interpolation
-                                // Find the corners of this cell by interpolating between registration marks
+                            if (row && row.length > 0) {
+                                // Use detected cells as reference
+                                let firstCell = row[0];
+                                let lastCell = row[row.length - 1];
+                                let totalWidth = (lastCell.center.x - firstCell.center.x);
                                 
-                                // Calculate top edge percentage
-                                let topPercentage = col / 15;
+                                // Average cell dimensions
+                                let avgWidth = row.reduce((sum, cell) => sum + cell.width, 0) / row.length;
+                                let avgHeight = row.reduce((sum, cell) => sum + cell.height, 0) / row.length;
                                 
-                                // Calculate left edge percentage
-                                let leftPercentage = row / 3;
-                                
-                                // Top-left corner of cell
-                                let x1 = lerp(
-                                    lerp(topLeft.center.x, topRight.center.x, topPercentage),
-                                    lerp(bottomLeft.center.x, bottomRight.center.x, topPercentage),
-                                    leftPercentage
-                                );
-                                let y1 = lerp(
-                                    lerp(topLeft.center.y, topRight.center.y, topPercentage),
-                                    lerp(bottomLeft.center.y, bottomRight.center.y, topPercentage),
-                                    leftPercentage
-                                );
-                                
-                                // Calculate next cell positions to determine width/height
-                                let nextColPercentage = (col + 1) / 15;
-                                let nextRowPercentage = (row + 1) / 3;
-                                
-                                // Top-right corner of cell
-                                let x2 = lerp(
-                                    lerp(topLeft.center.x, topRight.center.x, nextColPercentage),
-                                    lerp(bottomLeft.center.x, bottomRight.center.x, nextColPercentage),
-                                    leftPercentage
-                                );
-                                
-                                // Bottom-left corner of cell
-                                let y2 = lerp(
-                                    lerp(topLeft.center.y, topRight.center.y, topPercentage),
-                                    lerp(bottomLeft.center.y, bottomRight.center.y, topPercentage),
-                                    nextRowPercentage
-                                );
-                                
-                                // Calculate width and height
-                                let width = Math.abs(x2 - x1);
-                                let height = Math.abs(y2 - y1);
-                                
-                                // Add cell to the row
-                                rowCells.push({
-                                    x: x1 - width/2,
-                                    y: y1 - height/2,
-                                    width: width,
-                                    height: height,
-                                    center: {
-                                        x: x1,
-                                        y: y1
+                                // Create evenly spaced grid of 16 cells
+                                for (let j = 0; j < 16; j++) {
+                                    // Check if we have a detected cell at this position
+                                    let matchedCell = null;
+                                    
+                                    if (row.length === 16) {
+                                        // If we have exactly 16 cells, use them directly
+                                        matchedCell = row[j];
+                                    } else if (row.length > 0) {
+                                        // Try to find nearest cell
+                                        let idealX = firstCell.center.x + (j * totalWidth / 15);
+                                        
+                                        for (let k = 0; k < row.length; k++) {
+                                            if (Math.abs(row[k].center.x - idealX) < avgWidth * 0.5) {
+                                                matchedCell = row[k];
+                                                break;
+                                            }
+                                        }
                                     }
-                                });
+                                    
+                                    if (matchedCell) {
+                                        // Use detected cell
+                                        rowCells.push(matchedCell);
+                                    } else {
+                                        // Create inferred cell
+                                        let x = (row && row.length > 1) ?
+                                            firstCell.center.x + (j * totalWidth / 15) - avgWidth/2 :
+                                            (j * canvas.width / 16);
+                                            
+                                        let y = (row) ? 
+                                            firstCell.center.y - avgHeight/2 :
+                                            (i * canvas.height / 4);
+                                        
+                                        rowCells.push({
+                                            x: x,
+                                            y: y,
+                                            width: avgWidth || canvas.width/16,
+                                            height: avgHeight || canvas.height/4,
+                                            center: {
+                                                x: x + (avgWidth/2 || canvas.width/32),
+                                                y: y + (avgHeight/2 || canvas.height/8)
+                                            },
+                                            inferred: true
+                                        });
+                                    }
+                                }
+                            } else {
+                                // Create a default row if none detected
+                                for (let j = 0; j < 16; j++) {
+                                    rowCells.push({
+                                        x: j * canvas.width / 16,
+                                        y: i * canvas.height / 4,
+                                        width: canvas.width / 16,
+                                        height: canvas.height / 4,
+                                        center: {
+                                            x: (j + 0.5) * canvas.width / 16,
+                                            y: (i + 0.5) * canvas.height / 4
+                                        },
+                                        inferred: true
+                                    });
+                                }
                             }
                             
                             grid.cells.push(rowCells);
                         }
                         
-                        // Display the detected grid
+                        // Display the grid on canvas
                         outputCtx.drawImage(video, 0, 0, outputCanvas.width, outputCanvas.height);
                         
-                        // Draw the grid cells
+                        // Draw cells
                         for (let i = 0; i < grid.cells.length; i++) {
                             for (let j = 0; j < grid.cells[i].length; j++) {
                                 let cell = grid.cells[i][j];
-                                outputCtx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
+                                
+                                if (cell.inferred) {
+                                    outputCtx.strokeStyle = 'rgba(255, 255, 0, 0.7)'; // Yellow for inferred cells
+                                } else {
+                                    outputCtx.strokeStyle = 'rgba(0, 255, 0, 0.7)'; // Green for detected cells
+                                }
+                                
                                 outputCtx.lineWidth = 2;
                                 outputCtx.strokeRect(cell.x, cell.y, cell.width, cell.height);
                                 
-                                // Draw row and column labels for better usability
+                                // Draw row and column labels
                                 if (j === 0) {
                                     let rowName = '';
                                     switch(i) {
@@ -543,11 +567,15 @@
                                         case 2: rowName = 'SNARE'; break;
                                         case 3: rowName = 'CLAP'; break;
                                     }
-                                    outputCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-                                    outputCtx.fillRect(cell.x - 60, cell.y, 55, cell.height);
-                                    outputCtx.fillStyle = 'black';
-                                    outputCtx.font = '14px Arial';
-                                    outputCtx.fillText(rowName, cell.x - 55, cell.y + cell.height/2 + 5);
+                                    
+                                    // Draw label only if there's space
+                                    if (cell.x > 60) {
+                                        outputCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                                        outputCtx.fillRect(cell.x - 60, cell.y, 55, cell.height);
+                                        outputCtx.fillStyle = 'black';
+                                        outputCtx.font = '14px Arial';
+                                        outputCtx.fillText(rowName, cell.x - 55, cell.y + cell.height/2 + 5);
+                                    }
                                 }
                                 
                                 if (i === 0) {
@@ -562,210 +590,159 @@
                         
                         isCalibrated = true;
                         document.getElementById('startButton').disabled = false;
-                        alert("Grid successfully detected using registration marks! You can now start playback.");
-                    } else {
-                        cv.imshow(outputCanvas, displayMat);
-                        alert("Not all corner registration marks were detected. Please ensure all four corner markers are clearly visible.");
-                    }
-                } else {
-                    // If we couldn't find registration marks, try to detect grid cells directly as a fallback
-                    let gridCells = [];
-                    const cellMinArea = canvas.width * canvas.height * 0.0005; // 0.05% of image area
-                    const cellMaxArea = canvas.width * canvas.height * 0.01;   // 1% of image area
-                    
-                    for (let i = 0; i < contours.size(); ++i) {
-                        let cnt = contours.get(i);
-                        let area = cv.contourArea(cnt);
+                        alert("Grid created! Yellow cells are inferred, green are detected. You can now start playback.");
                         
-                        // Filter by area to find potential grid cells
-                        if (area > cellMinArea && area < cellMaxArea) {
-                            let perimeter = cv.arcLength(cnt, true);
-                            let approx = new cv.Mat();
-                            cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
-                            
-                            // Check if it's a rectangle (4 corners)
-                            if (approx.rows === 4) {
-                                // Get bounding rectangle
-                                let rect = cv.boundingRect(cnt);
-                                
-                                // Check aspect ratio to ensure it's roughly square
-                                let aspectRatio = rect.width / rect.height;
-                                if (aspectRatio > 0.7 && aspectRatio < 1.3) {
-                                    gridCells.push({
-                                        x: rect.x,
-                                        y: rect.y,
-                                        width: rect.width,
-                                        height: rect.height,
-                                        center: {
-                                            x: rect.x + rect.width / 2,
-                                            y: rect.y + rect.height / 2
-                                        }
-                                    });
-                                    
-                                    // Draw for visualization
-                                    cv.rectangle(displayMat, 
-                                        new cv.Point(rect.x, rect.y), 
-                                        new cv.Point(rect.x + rect.width, rect.y + rect.height), 
-                                        new cv.Scalar(0, 255, 0, 255), 2);
-                                }
-                            }
-                            approx.delete();
-                        }
+                    } else {
+                        // No cells found, show the processed image for debugging
+                        cv.imshow(outputCanvas, displayMat);
+                        alert("No grid cells detected. Try adjusting lighting or camera position.");
                     }
                     
-                    if (gridCells.length > 0) {
-                        // Group cells by row based on y-coordinate
-                        gridCells.sort((a, b) => a.center.y - b.center.y);
-                        
-                        // Find rows by clustering y-coordinates
-                        let rows = [];
-                        let currentRow = [gridCells[0]];
-                        let avgHeight = gridCells[0].height;
-                        
-                        for (let i = 1; i < gridCells.length; i++) {
-                            if (Math.abs(gridCells[i].center.y - gridCells[i-1].center.y) < avgHeight) {
-                                // Same row
-                                currentRow.push(gridCells[i]);
-                            } else {
-                                // New row
-                                rows.push(currentRow);
-                                currentRow = [gridCells[i]];
-                                // Update average height
-                                avgHeight = currentRow[0].height;
-                            }
-                        }
-                        
-                        // Add the last row
-                        if (currentRow.length > 0) {
-                            rows.push(currentRow);
-                        }
-                        
-                        // Sort each row by x-coordinate
-                        rows.forEach(row => {
-                            row.sort((a, b) => a.center.x - b.center.x);
-                        });
-                        
-                        // Use the detected rows to create our grid
-                        if (rows.length >= 4) {
-                            grid.cells = rows.slice(0, 4);
-                            
-                            // Display the detected grid
-                            outputCtx.drawImage(video, 0, 0, outputCanvas.width, outputCanvas.height);
-                            
-                            // Draw the grid cells
-                            for (let i = a = 0; i < grid.cells.length; i++) {
-                                for (let j = 0; j < grid.cells[i].length; j++) {
-                                    let cell = grid.cells[i][j];
-                                    outputCtx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
-                                    outputCtx.lineWidth = 2;
-                                    outputCtx.strokeRect(cell.x, cell.y, cell.width, cell.height);
-                                }
-                            }
-                            
-                            isCalibrated = true;
-                            document.getElementById('startButton').disabled = false;
-                            alert(`Grid detected with ${gridCells.length} cells. You can now start playback.`);
-                        } else {
-                            cv.imshow(outputCanvas, displayMat);
-                            alert(`Not enough rows detected (found ${rows.length}, need 4). Please ensure the grid is clearly visible.`);
-                        }
-                    } else {
-                        cv.imshow(outputCanvas, displayMat);
-                        alert("Could not detect grid cells. Please ensure good lighting and that the grid is clearly visible.");
-                    }
+                } catch (contourErr) {
+                    console.error("Error finding contours:", contourErr);
+                    document.getElementById('debug-info').textContent = "Error: " + contourErr.message;
+                    document.getElementById('debug-info').className = "error";
+                    
+                    // Try to show what we have for debugging
+                    cv.imshow(outputCanvas, dst);
+                    alert("Error during contour detection: " + contourErr.message);
                 }
                 
                 // Clean up
-                hierarchy.delete();
-                contours.delete();
-                displayMat.delete();
+                if (hierarchy) hierarchy.delete();
+                if (contours) contours.delete();
+                
             } catch (e) {
                 console.error("Error during calibration:", e);
-                alert("Error during calibration. Please try again.");
+                document.getElementById('debug-info').textContent = "Error: " + e.message;
+                document.getElementById('debug-info').className = "error";
+                
+                // Try to show what we have for debugging
+                try {
+                    cv.imshow(outputCanvas, src);
+                } catch (displayErr) {
+                    console.error("Error displaying debug image:", displayErr);
+                }
+                alert("Error during calibration: " + e.message);
             } finally {
-                src.delete();
-                dst.delete();
+                // Clean up all resources
+                if (src) src.delete();
+                if (dst) dst.delete();
+                if (displayMat) displayMat.delete();
             }
         }
         
-        // Improved process frame function for better filled cell detection
+        // Simplified processFrame function with better error handling
         function processFrame() {
             if (!isCalibrated) return;
             
-            // Capture current video frame
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            // Display the video frame on the output canvas
-            outputCtx.drawImage(video, 0, 0, outputCanvas.width, outputCanvas.height);
-            
-            // Get the image data
-            let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            
-            // Convert to OpenCV format
-            let src = cv.matFromImageData(imageData);
-            let gray = new cv.Mat();
-            
             try {
-                // Convert to grayscale
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                // Capture current video frame
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 
-                // Apply Gaussian blur to reduce noise
-                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+                // Display the video frame on the output canvas
+                outputCtx.drawImage(video, 0, 0, outputCanvas.width, outputCanvas.height);
                 
-                // Reset the drum grid
-                drumGrid = Array(4).fill().map(() => Array(16).fill(0));
+                // Get the image data
+                let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 
-                // Check each cell for filled status
-                for (let i = 0; i < grid.cells.length; i++) {
-                    for (let j = 0; j < grid.cells[i].length; j++) {
-                        let cell = grid.cells[i][j];
-                        
-                        // Create a rectangle for the center portion of the cell (to avoid edge effects)
-                        let centerX = Math.round(cell.x + cell.width * 0.25);
-                        let centerY = Math.round(cell.y + cell.height * 0.25);
-                        let centerWidth = Math.round(cell.width * 0.5);
-                        let centerHeight = Math.round(cell.height * 0.5);
-                        
-                        // Ensure the ROI is within bounds
-                        if (centerX < 0) centerX = 0;
-                        if (centerY < 0) centerY = 0;
-                        if (centerX + centerWidth >= gray.cols) centerWidth = gray.cols - centerX - 1;
-                        if (centerY + centerHeight >= gray.rows) centerHeight = gray.rows - centerY - 1;
-                        
-                        // Skip if invalid dimensions
-                        if (centerWidth <= 0 || centerHeight <= 0) continue;
-                        
-                        // Extract the region of interest (ROI)
-                        let roi = gray.roi(new cv.Rect(centerX, centerY, centerWidth, centerHeight));
-                        
-                        // Calculate average intensity in the cell
-                        let mean = cv.mean(roi);
-                        
-                        // Determine if the cell is filled based on intensity
-                        if (mean[0] < detectionThreshold) {
-                            // Cell is filled
-                            drumGrid[i][j] = 1;
-                            
-                            // Draw filled overlay
-                            outputCtx.fillStyle = 'rgba(255, 0, 0, 0.3)';
-                            outputCtx.fillRect(cell.x, cell.y, cell.width, cell.height);
+                // Convert to OpenCV format
+                let src = cv.matFromImageData(imageData);
+                let gray = new cv.Mat();
+                
+                try {
+                    // Convert to grayscale
+                    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                    
+                    // Apply Gaussian blur to reduce noise
+                    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+                    
+                    // Reset the drum grid
+                    drumGrid = Array(4).fill().map(() => Array(16).fill(0));
+                    
+                    // Check each cell for filled status
+                    for (let i = 0; i < grid.cells.length; i++) {
+                        for (let j = 0; j < grid.cells[i].length; j++) {
+                            try {
+                                let cell = grid.cells[i][j];
+                                
+                                // Make sure cell has valid dimensions
+                                if (!cell || cell.width <= 0 || cell.height <= 0) continue;
+                                
+                                // Get center of cell for sampling
+                                let centerX = Math.round(cell.x + cell.width * 0.25);
+                                let centerY = Math.round(cell.y + cell.height * 0.25);
+                                let centerWidth = Math.round(cell.width * 0.5);
+                                let centerHeight = Math.round(cell.height * 0.5);
+                                
+                                // Ensure we stay within image boundaries
+                                centerX = Math.max(0, Math.min(gray.cols - 1, centerX));
+                                centerY = Math.max(0, Math.min(gray.rows - 1, centerY));
+                                centerWidth = Math.min(centerWidth, gray.cols - centerX);
+                                centerHeight = Math.min(centerHeight, gray.rows - centerY);
+                                
+                                // Skip if invalid dimensions
+                                if (centerWidth <= 0 || centerHeight <= 0) continue;
+                                
+                                // Extract the region of interest (ROI)
+                                let roi = gray.roi(new cv.Rect(centerX, centerY, centerWidth, centerHeight));
+                                
+                                // Calculate average intensity in the cell
+                                let mean = cv.mean(roi);
+                                
+                                // Determine if the cell is filled based on intensity
+                                if (mean[0] < detectionThreshold) {
+                                    // Cell is filled
+                                    drumGrid[i][j] = 1;
+                                    
+                                    // Draw filled overlay
+                                    outputCtx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+                                    outputCtx.fillRect(cell.x, cell.y, cell.width, cell.height);
+                                }
+                                
+                                roi.delete();
+                            } catch (cellError) {
+                                console.error(`Error processing cell [${i},${j}]:`, cellError);
+                                // Continue with the next cell
+                            }
                         }
-                        
-                        roi.delete();
                     }
+                    
+                    // Draw grid lines for visual reference
+                    for (let i = 0; i < grid.cells.length; i++) {
+                        for (let j = 0; j < grid.cells[i].length; j++) {
+                            try {
+                                let cell = grid.cells[i][j];
+                                outputCtx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                                outputCtx.lineWidth = 1;
+                                outputCtx.strokeRect(cell.x, cell.y, cell.width, cell.height);
+                            } catch (drawError) {
+                                // Skip drawing this cell
+                            }
+                        }
+                    }
+                    
+                    // Highlight current step
+                    if (grid.cells[0] && grid.cells[0][currentStep]) {
+                        for (let i = 0; i < grid.cells.length; i++) {
+                            if (grid.cells[i] && grid.cells[i][currentStep]) {
+                                let cell = grid.cells[i][currentStep];
+                                outputCtx.strokeStyle = 'yellow';
+                                outputCtx.lineWidth = 3;
+                                outputCtx.strokeRect(cell.x, cell.y, cell.width, cell.height);
+                            }
+                        }
+                    }
+                    
+                } finally {
+                    // Clean up OpenCV resources
+                    src.delete();
+                    gray.delete();
                 }
-                
             } catch (e) {
-                console.error("Error processing frame:", e);
-            } finally {
-                src.delete();
-                gray.delete();
+                console.error("Error in processFrame:", e);
+                // Don't crash the main playback loop
             }
-        }
-        
-        // Linear interpolation helper function
-        function lerp(a, b, t) {
-            return a + t * (b - a);
         }
         
         // Play a sound
@@ -800,16 +777,6 @@
             try {
                 // Process the current video frame to update the drum grid
                 processFrame();
-                
-                // Highlight the current step on the grid
-                for (let i = 0; i < grid.cells.length; i++) {
-                    if (grid.cells[i] && grid.cells[i][currentStep]) {
-                        let cell = grid.cells[i][currentStep];
-                        outputCtx.strokeStyle = 'yellow';
-                        outputCtx.lineWidth = 4;
-                        outputCtx.strokeRect(cell.x, cell.y, cell.width, cell.height);
-                    }
-                }
                 
                 // Play sounds based on the drum grid state
                 for (let i = 0; i < drumGrid.length; i++) {
@@ -846,6 +813,7 @@
                 currentStep = (currentStep + 1) % 16;
             } catch (error) {
                 console.error("Error in playStep:", error);
+                document.getElementById('debug-info').textContent = "Playback error: " + error.message;
             }
         }
         
@@ -857,6 +825,7 @@
             if (isPlaying) {
                 // Start playback
                 startButton.textContent = 'Stop';
+                document.getElementById('debug-info').textContent = "Playback started";
                 
                 // Resume audio context if it was suspended (important for autoplay policies)
                 if (audioContext && audioContext.state === 'suspended') {
@@ -864,6 +833,8 @@
                         console.log('AudioContext resumed successfully');
                     }).catch(err => {
                         console.error('Failed to resume AudioContext:', err);
+                        document.getElementById('debug-info').textContent = "Failed to resume audio";
+                        document.getElementById('debug-info').className = "error";
                     });
                 }
                 
@@ -874,6 +845,7 @@
             } else {
                 // Stop playback
                 startButton.textContent = 'Start';
+                document.getElementById('debug-info').textContent = "Playback stopped";
                 clearInterval(playInterval);
             }
         }
@@ -925,22 +897,38 @@
             document.getElementById('tempo').addEventListener('input', updateTempo);
             document.getElementById('detectionThreshold').addEventListener('input', updateDetectionThreshold);
             
+            // Disable buttons initially
+            document.getElementById('cameraButton').disabled = true;
+            document.getElementById('calibrateButton').disabled = true;
+            document.getElementById('startButton').disabled = true;
+            
             // Load OpenCV.js
             const script = document.createElement('script');
             script.src = 'https://docs.opencv.org/4.5.5/opencv.js';
+            script.async = true;
             script.onload = function() {
+                console.log("OpenCV.js loaded successfully");
+                document.getElementById('debug-info').textContent = "OpenCV.js loaded";
                 opencv_loaded = true;
                 checkAllLoaded();
             };
             script.onerror = function() {
                 console.error("Failed to load OpenCV.js from primary source, trying alternative");
+                document.getElementById('debug-info').textContent = "Primary OpenCV.js failed, trying alternative";
+                
                 const altScript = document.createElement('script');
                 altScript.src = 'https://cdn.jsdelivr.net/npm/opencv.js@1.2.1/opencv.min.js';
+                altScript.async = true;
                 altScript.onload = function() {
+                    console.log("Alternative OpenCV.js loaded successfully");
+                    document.getElementById('debug-info').textContent = "Alternative OpenCV.js loaded";
                     opencv_loaded = true;
                     checkAllLoaded();
                 };
                 altScript.onerror = function() {
+                    console.error("Failed to load alternative OpenCV.js");
+                    document.getElementById('debug-info').textContent = "Failed to load OpenCV.js";
+                    document.getElementById('debug-info').className = "error";
                     alert("Failed to load OpenCV.js. Please check your internet connection and try again.");
                 };
                 document.head.appendChild(altScript);
@@ -950,6 +938,13 @@
             // Don't load audio samples here - wait for user interaction
             // Just set the flag to indicate we're ready to check loading status
             samples_loaded = false;
+            
+            // Initialize audio context when user interacts with the page
+            document.addEventListener('click', function() {
+                if (!audioContext) {
+                    initAudioContext();
+                }
+            }, { once: true });
         });
     </script>
 </body>
