@@ -238,7 +238,7 @@
             }
         }
         
-        // Load audio samples
+        // Load audio samples - RESTORED ORIGINAL VERSION
         function loadAudioSamples() {
             let loadedCount = 0;
             const totalSamples = sampleNames.length;
@@ -246,10 +246,10 @@
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-                // Function to decode base64 audio
+                // Function to decode base64 audio - ORIGINAL VERSION RESTORED
                 function loadSample(name, base64String) {
                     try {
-                        // Convert base64 to binary
+                        // Convert base64 to binary - using original method
                         const byteCharacters = atob(base64String);
                         const byteNumbers = new Array(byteCharacters.length);
                         
@@ -275,12 +275,10 @@
                             },
                             function(error) {
                                 console.error('Error decoding audio data for ' + name + ':', error);
-                                document.getElementById('debug-info').textContent = `Error loading ${name} sample`;
                             }
                         );
                     } catch (error) {
                         console.error('Error processing base64 data for ' + name + ':', error);
-                        document.getElementById('debug-info').textContent = `Error processing ${name} sample`;
                     }
                 }
                 
@@ -291,8 +289,6 @@
                 
             } catch(e) {
                 console.error('Web Audio API is not supported in this browser', e);
-                document.getElementById('debug-info').textContent = "Audio API not supported";
-                document.getElementById('debug-info').className = "error";
             }
         }
         
