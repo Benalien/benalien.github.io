@@ -656,6 +656,9 @@
                             for (let j = 0; j < grid.cells[i].length; j++) {
                                 let cell = grid.cells[i][j];
                                 
+                                // Skip invalid cells
+                                if (!cell || !cell.width || cell.width <= 0 || !cell.height || cell.height <= 0) continue;
+                                
                                 // Draw base grid cell
                                 cv.rectangle(
                                     warpedColor,
@@ -760,18 +763,16 @@
             }
         }
         
-        // Analyze grid cells to detect filled ones - FIXED version
+        // Analyze grid cells to detect filled ones with enhanced right-side detection
         function analyzeGridCells(warpedImage) {
             try {
-                // Create a binary image for cell content analysis - use the current threshold value
+                console.log("Analyzing grid cells with enhanced right-side sensitivity");
+                
+                // Create a binary image for cell content analysis
                 let binary = new cv.Mat();
                 
-                // Debug output to check threshold value
-                console.log("Applying detection threshold:", detectionThreshold);
-                
-                // Use THRESH_BINARY_INV with the current threshold value
-                // Higher threshold value = more sensitive detection
-                cv.threshold(warpedImage, binary, 255 - detectionThreshold, 255, cv.THRESH_BINARY_INV);
+                // Use regular threshold but with lower value for better sensitivity
+                cv.threshold(warpedImage, binary, 100, 255, cv.THRESH_BINARY_INV);
                 
                 // Reset the drum grid
                 drumGrid = Array(4).fill().map(() => Array(16).fill(0));
@@ -785,11 +786,26 @@
                             // Skip invalid cells
                             if (!cell || !cell.width || cell.width <= 0 || !cell.height || cell.height <= 0) continue;
                             
-                            // Get center of cell for sampling (focus on inner part of cell)
-                            let centerX = Math.round(cell.x + cell.width * 0.25);
-                            let centerY = Math.round(cell.y + cell.height * 0.25);
-                            let centerWidth = Math.round(cell.width * 0.5);
-                            let centerHeight = Math.round(cell.height * 0.5);
+                            // Use different sampling approaches based on column position
+                            // Right-side cells (columns 13-15) need more aggressive detection
+                            const isRightSide = j >= 13;
+                            
+                            // Adjust detection area based on position
+                            let centerX, centerY, centerWidth, centerHeight;
+                            
+                            if (isRightSide) {
+                                // For right-side cells, scan almost the entire cell
+                                centerX = Math.round(cell.x + cell.width * 0.1);
+                                centerY = Math.round(cell.y + cell.height * 0.1);
+                                centerWidth = Math.round(cell.width * 0.8);
+                                centerHeight = Math.round(cell.height * 0.8);
+                            } else {
+                                // For regular cells, use the standard approach
+                                centerX = Math.round(cell.x + cell.width * 0.25);
+                                centerY = Math.round(cell.y + cell.height * 0.25);
+                                centerWidth = Math.round(cell.width * 0.5);
+                                centerHeight = Math.round(cell.height * 0.5);
+                            }
                             
                             // Ensure we stay within image boundaries
                             centerX = Math.max(0, Math.min(binary.cols - 1, centerX));
@@ -808,17 +824,18 @@
                             let whitePixels = cv.countNonZero(roi);
                             let fillPercentage = (whitePixels / totalPixels) * 100;
                             
-                            // Debug output for some cells to understand detection
-                            if (i === 0 && (j === 13 || j === 14 || j === 15)) { // Looking at the problematic cells
-                                console.log(`Cell [${i},${j}]: ${fillPercentage.toFixed(1)}% filled`);
+                            // Log problematic cells for debugging
+                            if (isRightSide) {
+                                console.log(`Right-side Cell [${i},${j}]: ${fillPercentage.toFixed(1)}% filled`);
                             }
                             
-                            // Lowering the threshold to catch more filled cells
-                            const fillThreshold = 8; // Lower threshold, as some cells are hard to detect
+                            // Use different thresholds based on column position
+                            let fillThreshold = isRightSide ? 5 : 10; // Much lower threshold for right-side cells
                             
                             if (fillPercentage > fillThreshold) {
                                 // Cell is filled
                                 drumGrid[i][j] = 1;
+                                console.log(`Detected filled cell at [${i},${j}] with ${fillPercentage.toFixed(1)}%`);
                             }
                             
                             roi.delete();
@@ -838,11 +855,16 @@
             }
         }
         
-        // Draw current playback state - FIXED version
+        // Draw current playback state - FIXED version with better visualization
         function drawPlaybackState() {
             if (!isCalibrated || !grid.perspectiveMatrix || !gridCaptured) return;
             
             try {
+                // Get current step locally to ensure consistency
+                const stepToDraw = currentStep;
+                
+                console.log(`Drawing step ${stepToDraw + 1}`);
+                
                 // Create a warped version of the image for display
                 let warped = new cv.Mat();
                 let src = cv.matFromImageData(capturedImage);
@@ -863,7 +885,7 @@
                 let warpedColor = new cv.Mat();
                 cv.cvtColor(warped, warpedColor, cv.COLOR_GRAY2RGBA);
                 
-                // Draw the grid and highlight filled cells and current step
+                // First pass: Draw all grid cells
                 for (let i = 0; i < grid.cells.length; i++) {
                     for (let j = 0; j < grid.cells[i].length; j++) {
                         try {
@@ -877,33 +899,60 @@
                                 warpedColor,
                                 new cv.Point(cell.x, cell.y),
                                 new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                new cv.Scalar(255, 255, 255, 255),
+                                new cv.Scalar(150, 150, 150, 255), // Gray for all cells
                                 1
                             );
                             
-                            // Highlight filled cells
+                            // Highlight filled cells with red
                             if (drumGrid[i][j] === 1) {
                                 cv.rectangle(
                                     warpedColor,
-                                    new cv.Point(cell.x, cell.y),
-                                    new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                    new cv.Scalar(255, 0, 0, 255),
-                                    -1 // filled rectangle
-                                );
-                            }
-                            
-                            // Highlight current step - FIXED to ensure all cells in the same column are highlighted
-                            if (j === currentStep) {
-                                cv.rectangle(
-                                    warpedColor,
-                                    new cv.Point(cell.x, cell.y),
-                                    new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                    new cv.Scalar(255, 255, 0, 255),
-                                    3
+                                    new cv.Point(cell.x + 2, cell.y + 2), // Slightly inset
+                                    new cv.Point(cell.x + cell.width - 2, cell.y + cell.height - 2),
+                                    new cv.Scalar(255, 0, 0, 255), // Red for filled cells
+                                    -1 // Fill the rectangle
                                 );
                             }
                         } catch (drawError) {
-                            // Skip drawing this cell
+                            // Skip drawing problematic cells
+                        }
+                    }
+                }
+                
+                // Second pass: Draw ONLY the current step column with yellow highlight
+                for (let i = 0; i < grid.cells.length; i++) {
+                    // Make sure row and column exist
+                    if (i < grid.cells.length && stepToDraw < grid.cells[i].length) {
+                        try {
+                            let cell = grid.cells[i][stepToDraw];
+                            
+                            // Skip invalid cells
+                            if (!cell || !cell.width || cell.width <= 0 || !cell.height || cell.height <= 0) continue;
+                            
+                            // Very obvious yellow highlight for current step
+                            cv.rectangle(
+                                warpedColor,
+                                new cv.Point(cell.x, cell.y),
+                                new cv.Point(cell.x + cell.width, cell.y + cell.height),
+                                new cv.Scalar(255, 255, 0, 255), // Bright yellow
+                                3 // Thick outline
+                            );
+                            
+                            // Add column number at the top for first row
+                            if (i === 0) {
+                                const stepLabel = (stepToDraw + 1).toString();
+                                cv.putText(
+                                    warpedColor,
+                                    stepLabel,
+                                    new cv.Point(cell.x + cell.width/2 - 5, cell.y - 5),
+                                    cv.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    new cv.Scalar(255, 255, 255, 255),
+                                    1
+                                );
+                            }
+                        } catch (drawError) {
+                            console.error("Error highlighting current step:", drawError);
                         }
                     }
                 }
@@ -923,7 +972,7 @@
             }
         }
         
-        // Play a sound
+        // Play a sound - IMPROVED version
         function playSound(sampleName) {
             if (!audioContext) {
                 console.error('AudioContext not initialized');
@@ -940,59 +989,72 @@
                 const source = audioContext.createBufferSource();
                 source.buffer = audioBuffers[sampleName];
                 
-                // Connect to the audio output
-                source.connect(audioContext.destination);
+                // Create a gain node for volume control
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 1.0; // Full volume
                 
-                // Play the sound
+                // Connect the source to the gain node, then to the destination
+                source.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                // Start the sound immediately
                 source.start(0);
+                
+                // Log successful playback
+                console.log(`Playing ${sampleName} sound`);
             } catch (err) {
                 console.error(`Error playing sound "${sampleName}":`, err);
             }
         }
         
-        // Main playback loop - FIXED version
+        // Fixed playback step function to ensure synchronization
         function playStep() {
             try {
-                // Update visualization to show current step
+                // Save the current step locally to ensure we're working with the same step
+                // throughout this function execution
+                const stepToPlay = currentStep;
+                
+                console.log(`Playing step ${stepToPlay + 1}`);
+                
+                // Update visualization to show current step FIRST, before playing sounds
                 drawPlaybackState();
                 
-                // Play sounds based on the drum grid state
-                for (let i = 0; i < grid.rows; i++) {
-                    // Make sure we have a valid row
-                    if (i < drumGrid.length) {
-                        // Check if this cell should trigger a sound
-                        if (drumGrid[i][currentStep] === 1) {
-                            // Determine which sample to play based on row
-                            let sampleToPlay;
-                            
-                            switch (i) {
-                                case 0: // KICK (top row)
-                                    sampleToPlay = 'kick';
-                                    break;
-                                case 1: // HAT (second row)
-                                    sampleToPlay = 'hat';
-                                    break;
-                                case 2: // SNARE (third row)
-                                    sampleToPlay = 'snare';
-                                    break;
-                                case 3: // CLAP (bottom row)
-                                    sampleToPlay = 'clap';
-                                    break;
-                            }
-                            
-                            // Play the selected sample
-                            if (sampleToPlay) {
-                                playSound(sampleToPlay);
-                            }
+                // IMPORTANT: Now play sounds for THIS specific step, not using whatever
+                // currentStep might have changed to in the meantime
+                for (let row = 0; row < drumGrid.length; row++) {
+                    // Check if this specific cell is filled
+                    if (drumGrid[row][stepToPlay] === 1) {
+                        // Determine which sample to play based on row
+                        let sampleToPlay;
+                        
+                        switch (row) {
+                            case 0: // KICK (top row)
+                                sampleToPlay = 'kick';
+                                break;
+                            case 1: // HAT (second row)
+                                sampleToPlay = 'hat';
+                                break;
+                            case 2: // SNARE (third row)
+                                sampleToPlay = 'snare';
+                                break;
+                            case 3: // CLAP (bottom row)
+                                sampleToPlay = 'clap';
+                                break;
+                        }
+                        
+                        // Play the selected sample
+                        if (sampleToPlay) {
+                            console.log(`Playing ${sampleToPlay} at step ${stepToPlay + 1}`);
+                            playSound(sampleToPlay);
                         }
                     }
                 }
                 
                 // Update step display
-                document.getElementById('currentStep').textContent = `Current Step: ${currentStep+1}`;
+                document.getElementById('currentStep').textContent = `Current Step: ${stepToPlay + 1}`;
                 
-                // Move to the next step
-                currentStep = (currentStep + 1) % 16;
+                // AFTER playing sounds, move to the next step for next time
+                currentStep = (stepToPlay + 1) % 16;
             } catch (error) {
                 console.error("Error in playStep:", error);
                 document.getElementById('debug-info').textContent = "Playback error: " + error.message;
@@ -1000,7 +1062,7 @@
             }
         }
         
-        // Toggle playback (start/stop)
+        // Improved playback timing
         function togglePlayback() {
             isPlaying = !isPlaying;
             const startButton = document.getElementById('startButton');
@@ -1010,26 +1072,40 @@
                 startButton.textContent = 'Stop';
                 document.getElementById('debug-info').textContent = "Playback started";
                 
-                // Resume audio context if it was suspended (important for autoplay policies)
-                if (audioContext && audioContext.state === 'suspended') {
+                // Resume audio context if it was suspended
+                if (audioContext) {
+                    // Force resume regardless of state
                     audioContext.resume().then(() => {
                         console.log('AudioContext resumed successfully');
                     }).catch(err => {
                         console.error('Failed to resume AudioContext:', err);
-                        document.getElementById('debug-info').textContent = "Failed to resume audio";
-                        document.getElementById('debug-info').className = "error";
                     });
                 }
                 
-                // Start the playback loop
+                // Reset to first step
                 currentStep = 0;
-                playStep();
-                playInterval = setInterval(playStep, stepTime);
+                
+                // Use a more precise timing approach with setTimeout instead of setInterval
+                // This avoids timing drift that can happen with setInterval
+                function scheduleNextStep() {
+                    if (!isPlaying) return; // Stop if playback was stopped
+                    
+                    // Play the current step
+                    playStep();
+                    
+                    // Schedule the next step with precise timing
+                    setTimeout(() => {
+                        scheduleNextStep();
+                    }, stepTime);
+                }
+                
+                // Start the first step immediately
+                scheduleNextStep();
             } else {
                 // Stop playback
                 startButton.textContent = 'Start';
                 document.getElementById('debug-info').textContent = "Playback stopped";
-                clearInterval(playInterval);
+                // No need to clear interval - the scheduleNextStep function will stop itself
             }
         }
         
@@ -1039,14 +1115,10 @@
             document.getElementById('tempoValue').textContent = tempo;
             stepTime = 60000 / tempo / 4; // 16th notes
             
-            // Update the interval if already playing
-            if (isPlaying) {
-                clearInterval(playInterval);
-                playInterval = setInterval(playStep, stepTime);
-            }
+            // No need to update an interval - the next scheduled step will use the new stepTime
         }
         
-        // Update detection threshold - FIXED version
+        // Update detection threshold
         function updateDetectionThreshold() {
             // Update the threshold value - which we now use as sensitivity level
             detectionThreshold = parseInt(document.getElementById('detectionThreshold').value);
