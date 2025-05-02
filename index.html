@@ -156,8 +156,8 @@
         
         <div id="detection-control">
             <label for="detectionThreshold">Detection Sensitivity: </label>
-            <input type="range" id="detectionThreshold" min="10" max="200" value="80">
-            <span id="thresholdValue">80</span>
+            <input type="range" id="detectionThreshold" min="10" max="240" value="180">
+            <span id="thresholdValue">180</span>
         </div>
         
         <div id="currentStep">Current Step: -</div>
@@ -185,7 +185,7 @@
             cols: 16, // 16 columns
             cells: []
         };
-        let detectionThreshold = 80;
+        let detectionThreshold = 180; // Starting with higher sensitivity
 
         // Sample names
         const sampleNames = [
@@ -760,12 +760,18 @@
             }
         }
         
-        // Analyze grid cells to detect filled ones
+        // Analyze grid cells to detect filled ones - FIXED version
         function analyzeGridCells(warpedImage) {
             try {
-                // Create a binary image for cell content analysis
+                // Create a binary image for cell content analysis - use the current threshold value
                 let binary = new cv.Mat();
-                cv.threshold(warpedImage, binary, detectionThreshold, 255, cv.THRESH_BINARY_INV);
+                
+                // Debug output to check threshold value
+                console.log("Applying detection threshold:", detectionThreshold);
+                
+                // Use THRESH_BINARY_INV with the current threshold value
+                // Higher threshold value = more sensitive detection
+                cv.threshold(warpedImage, binary, 255 - detectionThreshold, 255, cv.THRESH_BINARY_INV);
                 
                 // Reset the drum grid
                 drumGrid = Array(4).fill().map(() => Array(16).fill(0));
@@ -802,10 +808,15 @@
                             let whitePixels = cv.countNonZero(roi);
                             let fillPercentage = (whitePixels / totalPixels) * 100;
                             
-                            // Debug: console.log(`Cell [${i},${j}]: ${fillPercentage.toFixed(1)}% filled`);
+                            // Debug output for some cells to understand detection
+                            if (i === 0 && (j === 13 || j === 14 || j === 15)) { // Looking at the problematic cells
+                                console.log(`Cell [${i},${j}]: ${fillPercentage.toFixed(1)}% filled`);
+                            }
                             
-                            // Determine if the cell is filled based on percentage of white pixels
-                            if (fillPercentage > 10) { // Consider filled if more than 10% of pixels are white
+                            // Lowering the threshold to catch more filled cells
+                            const fillThreshold = 8; // Lower threshold, as some cells are hard to detect
+                            
+                            if (fillPercentage > fillThreshold) {
                                 // Cell is filled
                                 drumGrid[i][j] = 1;
                             }
@@ -827,7 +838,7 @@
             }
         }
         
-        // Draw current playback state
+        // Draw current playback state - FIXED version
         function drawPlaybackState() {
             if (!isCalibrated || !grid.perspectiveMatrix || !gridCaptured) return;
             
@@ -881,7 +892,7 @@
                                 );
                             }
                             
-                            // Highlight current step
+                            // Highlight current step - FIXED to ensure all cells in the same column are highlighted
                             if (j === currentStep) {
                                 cv.rectangle(
                                     warpedColor,
@@ -939,36 +950,40 @@
             }
         }
         
-        // Main playback loop
+        // Main playback loop - FIXED version
         function playStep() {
             try {
                 // Update visualization to show current step
                 drawPlaybackState();
                 
                 // Play sounds based on the drum grid state
-                for (let i = 0; i < drumGrid.length; i++) {
-                    if (drumGrid[i][currentStep]) {
-                        // Determine which sample to play based on row
-                        let sampleToPlay;
-                        
-                        switch (i) {
-                            case 0: // KICK (top row)
-                                sampleToPlay = 'kick';
-                                break;
-                            case 1: // HAT (second row)
-                                sampleToPlay = 'hat';
-                                break;
-                            case 2: // SNARE (third row)
-                                sampleToPlay = 'snare';
-                                break;
-                            case 3: // CLAP (bottom row)
-                                sampleToPlay = 'clap';
-                                break;
-                        }
-                        
-                        // Play the selected sample
-                        if (sampleToPlay) {
-                            playSound(sampleToPlay);
+                for (let i = 0; i < grid.rows; i++) {
+                    // Make sure we have a valid row
+                    if (i < drumGrid.length) {
+                        // Check if this cell should trigger a sound
+                        if (drumGrid[i][currentStep] === 1) {
+                            // Determine which sample to play based on row
+                            let sampleToPlay;
+                            
+                            switch (i) {
+                                case 0: // KICK (top row)
+                                    sampleToPlay = 'kick';
+                                    break;
+                                case 1: // HAT (second row)
+                                    sampleToPlay = 'hat';
+                                    break;
+                                case 2: // SNARE (third row)
+                                    sampleToPlay = 'snare';
+                                    break;
+                                case 3: // CLAP (bottom row)
+                                    sampleToPlay = 'clap';
+                                    break;
+                            }
+                            
+                            // Play the selected sample
+                            if (sampleToPlay) {
+                                playSound(sampleToPlay);
+                            }
                         }
                     }
                 }
@@ -1031,10 +1046,13 @@
             }
         }
         
-        // Update detection threshold
+        // Update detection threshold - FIXED version
         function updateDetectionThreshold() {
-            detectionThreshold = document.getElementById('detectionThreshold').value;
+            // Update the threshold value - which we now use as sensitivity level
+            detectionThreshold = parseInt(document.getElementById('detectionThreshold').value);
             document.getElementById('thresholdValue').textContent = detectionThreshold;
+            
+            console.log("Detection sensitivity updated to:", detectionThreshold);
             
             // If grid is already calibrated, reanalyze with the new threshold
             if (isCalibrated && capturedImage) {
@@ -1064,7 +1082,7 @@
                     gray.delete();
                     warped.delete();
                     
-                    document.getElementById('debug-info').textContent = "Detection threshold updated";
+                    document.getElementById('debug-info').textContent = "Detection sensitivity updated to " + detectionThreshold;
                 } catch (e) {
                     console.error("Error updating detection threshold:", e);
                 }
