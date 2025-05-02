@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simplified Paper Drum Machine</title>
+    <title>Paper Drum Machine</title>
     <link rel="icon" href="data:,">
     <style>
         body {
@@ -115,20 +115,25 @@
         #detectionThreshold {
             width: 200px;
         }
+        #debug-info {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
     <div id="container">
-        <h1>Simplified Paper Drum Machine</h1>
+        <h1>Paper Drum Machine</h1>
         
         <div id="loading" class="loading">Loading OpenCV.js and Audio Samples...</div>
         
         <div id="instructions">
             <h2>Instructions</h2>
             <ul>
-                <li>Print out the grid pattern on paper</li>
+                <li>Print out the grid template with registration marks</li>
                 <li>Fill in cells with a dark pen or marker to activate sounds at those steps</li>
-                <li>Position your paper in front of the camera</li>
+                <li>Position your paper in front of the camera, ensuring all four corner marks are visible</li>
                 <li>Press "Calibrate" to detect the grid</li>
                 <li>Press "Start" to begin playback</li>
             </ul>
@@ -160,12 +165,13 @@
         </div>
         
         <div id="currentStep">Current Step: -</div>
+        <div id="debug-info"></div>
     </div>
 
     <script>
         // Global variables
         let video, canvas, ctx, outputCanvas, outputCtx;
-        let drumGrid = Array(4).fill().map(() => Array(16).fill(0)); // Simplified to 4 rows, 16 steps
+        let drumGrid = Array(4).fill().map(() => Array(16).fill(0)); // 4 rows, 16 steps
         let isPlaying = false;
         let currentStep = 0;
         let tempo = 120;
@@ -177,13 +183,13 @@
         let opencv_loaded = false;
         let samples_loaded = false;
         let grid = {
-            rows: 4,  // Simplified to 4 rows
-            cols: 16, // Simplified to 16 columns
+            rows: 4,  // 4 rows
+            cols: 16, // 16 columns
             cells: []
         };
         let detectionThreshold = 80;
 
-        // Sample names - simplified to 4 basic drums
+        // Sample names - 4 basic drums
         const sampleNames = [
             'kick',
             'hat',
@@ -191,7 +197,7 @@
             'clap'
         ];
 
-        // Base64 encoded MP3 samples - replace "PLACEHOLDER" with actual base64 encoded audio
+        // Base64 encoded MP3 samples - replace with your own
         const base64Samples = {
             kick: "SUQzAgAAAAAfdlRTUwAAEQBMb2dpYyBQcm8gMTEuMS4yQ09NAABoAGVuZ2lUdW5OT1JNACAwMDAwMDFFRSAwMDAwMDFFRSAwMDAwMDY2NyAwMDAwMDY2NyAwMDAwMDAxOCAwMDAwMDAxOCAwMDAwNzUwMyAwMDAwNzUwMyAwMDAwMDAwMCAwMDAwMDAwMABDT00AAIIAZW5naVR1blNNUEIAIDAwMDAwMDAwIDAwMDAwMjEwIDAwMDAwQTNBIDAwMDAwMDAwMDAwMDFDMzYgMDAwMDAwMDAgMDAwMDAxODAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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",
             hat: "SUQzAgAAAAAfdlRTUwAAEQBMb2dpYyBQcm8gMTEuMS4yQ09NAABoAGVuZ2lUdW5OT1JNACAwMDAwMDhGOSAwMDAwMDcwNSAwMDAwMjBGRiAwMDAwMTk1RSAwMDAwMDAxOCAwMDAwMDAxOCAwMDAwNkY1RSAwMDAwNjdCQSAwMDAwMDAwMCAwMDAwMDAwMABDT00AAIIAZW5naVR1blNNUEIAIDAwMDAwMDAwIDAwMDAwMjEwIDAwMDAwODc3IDAwMDAwMDAwMDAwMDEwNzkgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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",
@@ -302,7 +308,7 @@
             }
         }
         
-        // Calibrate - detect grid
+        // Improved calibrate function with registration mark detection
         function calibrate() {
             if (!video.videoWidth) {
                 alert("Camera not ready yet. Please wait a moment.");
@@ -324,126 +330,355 @@
             // Convert to OpenCV format
             let src = cv.matFromImageData(imageData);
             let dst = new cv.Mat();
+            let displayMat = src.clone(); // For visualization
             
             try {
                 // Convert to grayscale
                 cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
                 
-                // Apply Gaussian blur to reduce noise
-                cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0);
+                // Apply bilateral filter to reduce noise while preserving edges
+                cv.bilateralFilter(dst, dst, 9, 75, 75);
                 
                 // Apply adaptive threshold to get binary image
                 cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+                
+                // Apply morphological operations to enhance structures
+                let kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+                cv.morphologyEx(dst, dst, cv.MORPH_CLOSE, kernel);
+                cv.morphologyEx(dst, dst, cv.MORPH_OPEN, kernel);
+                kernel.delete();
                 
                 // Find contours
                 let contours = new cv.MatVector();
                 let hierarchy = new cv.Mat();
                 cv.findContours(dst, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
                 
-                // Find grid cells (look for rectangles of appropriate size)
-                let gridCells = [];
+                // First, look for registration marks (they should be larger squares with distinct internal patterns)
+                let registrationMarks = [];
+                const regMarkMinArea = canvas.width * canvas.height * 0.001; // 0.1% of image area
+                
                 for (let i = 0; i < contours.size(); ++i) {
                     let cnt = contours.get(i);
                     let area = cv.contourArea(cnt);
                     
-                    // Filter by area to find potential grid cells
-                    if (area > 100 && area < 5000) {
+                    // Registration marks should be larger than regular cells
+                    if (area > regMarkMinArea) {
                         let perimeter = cv.arcLength(cnt, true);
                         let approx = new cv.Mat();
-                        cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
+                        cv.approxPolyDP(cnt, approx, 0.05 * perimeter, true);
                         
-                        // Check if it's a rectangle (4 corners)
+                        // Registration marks should be approximately square (4 corners)
                         if (approx.rows === 4) {
-                            // Get bounding rectangle
                             let rect = cv.boundingRect(cnt);
+                            let aspectRatio = rect.width / rect.height;
                             
                             // Check aspect ratio to ensure it's roughly square
-                            let aspectRatio = rect.width / rect.height;
-                            if (aspectRatio > 0.7 && aspectRatio < 1.3) {
-                                gridCells.push({
+                            if (aspectRatio > 0.8 && aspectRatio < 1.2) {
+                                registrationMarks.push({
                                     x: rect.x,
                                     y: rect.y,
                                     width: rect.width,
                                     height: rect.height,
-                                    contour: cnt
+                                    center: {
+                                        x: rect.x + rect.width / 2,
+                                        y: rect.y + rect.height / 2
+                                    }
                                 });
+                                
+                                // Draw registration mark for visualization
+                                cv.rectangle(displayMat, 
+                                    new cv.Point(rect.x, rect.y), 
+                                    new cv.Point(rect.x + rect.width, rect.y + rect.height), 
+                                    new cv.Scalar(255, 0, 0, 255), 3);
                             }
                         }
                         approx.delete();
                     }
                 }
                 
-                // Sort cells by position to organize into rows and columns
-                if (gridCells.length > 0) {
-                    // First, sort by y-coordinate (rows)
-                    gridCells.sort((a, b) => a.y - b.y);
+                document.getElementById('debug-info').textContent = `Found ${registrationMarks.length} potential registration marks`;
+                
+                // We need at least 4 registration marks (one at each corner)
+                if (registrationMarks.length >= 4) {
+                    // Sort registration marks by position to identify corners
+                    // Calculate centroid
+                    let centroidX = registrationMarks.reduce((sum, mark) => sum + mark.center.x, 0) / registrationMarks.length;
+                    let centroidY = registrationMarks.reduce((sum, mark) => sum + mark.center.y, 0) / registrationMarks.length;
                     
-                    // Group cells into rows based on similar y-coordinates
-                    let rows = [];
-                    let currentRow = [gridCells[0]];
-                    let rowHeight = gridCells[0].height;
+                    // Identify corner marks
+                    let topLeft = null;
+                    let topRight = null;
+                    let bottomLeft = null;
+                    let bottomRight = null;
                     
-                    for (let i = 1; i < gridCells.length; i++) {
-                        // If this cell is within the same row (y-coordinate is close)
-                        if (Math.abs(gridCells[i].y - gridCells[i-1].y) < rowHeight * 0.5) {
-                            currentRow.push(gridCells[i]);
+                    registrationMarks.forEach(mark => {
+                        if (mark.center.x < centroidX && mark.center.y < centroidY) {
+                            // Top-left quadrant
+                            if (!topLeft || 
+                                Math.hypot(mark.center.x - centroidX, mark.center.y - centroidY) > 
+                                Math.hypot(topLeft.center.x - centroidX, topLeft.center.y - centroidY)) {
+                                topLeft = mark;
+                            }
+                        } else if (mark.center.x >= centroidX && mark.center.y < centroidY) {
+                            // Top-right quadrant
+                            if (!topRight || 
+                                Math.hypot(mark.center.x - centroidX, mark.center.y - centroidY) > 
+                                Math.hypot(topRight.center.x - centroidX, topRight.center.y - centroidY)) {
+                                topRight = mark;
+                            }
+                        } else if (mark.center.x < centroidX && mark.center.y >= centroidY) {
+                            // Bottom-left quadrant
+                            if (!bottomLeft || 
+                                Math.hypot(mark.center.x - centroidX, mark.center.y - centroidY) > 
+                                Math.hypot(bottomLeft.center.x - centroidX, bottomLeft.center.y - centroidY)) {
+                                bottomLeft = mark;
+                            }
                         } else {
-                            // This cell is in a new row
-                            rows.push(currentRow);
-                            currentRow = [gridCells[i]];
+                            // Bottom-right quadrant
+                            if (!bottomRight || 
+                                Math.hypot(mark.center.x - centroidX, mark.center.y - centroidY) > 
+                                Math.hypot(bottomRight.center.x - centroidX, bottomRight.center.y - centroidY)) {
+                                bottomRight = mark;
+                            }
                         }
-                    }
-                    rows.push(currentRow);
-                    
-                    // Sort each row by x-coordinate
-                    rows.forEach(row => {
-                        row.sort((a, b) => a.x - b.x);
                     });
                     
-                    // Now rows contain our grid cells organized by position
-                    if (rows.length >= 4) {  // We need at least 4 rows for our instruments
-                        // Take the first 4 rows (for the 4 instruments)
-                        rows = rows.slice(0, 4);
+                    // We now have the four corner registration marks
+                    if (topLeft && topRight && bottomLeft && bottomRight) {
+                        // Label for visual debugging
+                        cv.putText(displayMat, "TL", new cv.Point(topLeft.center.x, topLeft.center.y), 
+                            cv.FONT_HERSHEY_SIMPLEX, 1, new cv.Scalar(0, 255, 0, 255), 2);
+                        cv.putText(displayMat, "TR", new cv.Point(topRight.center.x, topRight.center.y), 
+                            cv.FONT_HERSHEY_SIMPLEX, 1, new cv.Scalar(0, 255, 0, 255), 2);
+                        cv.putText(displayMat, "BL", new cv.Point(bottomLeft.center.x, bottomLeft.center.y), 
+                            cv.FONT_HERSHEY_SIMPLEX, 1, new cv.Scalar(0, 255, 0, 255), 2);
+                        cv.putText(displayMat, "BR", new cv.Point(bottomRight.center.x, bottomRight.center.y), 
+                            cv.FONT_HERSHEY_SIMPLEX, 1, new cv.Scalar(0, 255, 0, 255), 2);
                         
-                        // For each row, take up to 16 cells (for 16 steps)
-                        grid.cells = rows.map(row => {
-                            return row.slice(0, 16).map(cell => {
-                                return {
-                                    x: cell.x,
-                                    y: cell.y,
-                                    width: cell.width,
-                                    height: cell.height,
-                                    contour: cell.contour
-                                };
-                            });
-                        });
+                        // Now we can create the grid using the registration marks
+                        grid.cells = [];
+                        
+                        // For each row (0 to 3)
+                        for (let row = 0; row < 4; row++) {
+                            let rowCells = [];
+                            
+                            // For each column (0 to 15)
+                            for (let col = 0; col < 16; col++) {
+                                // Calculate cell position using perspective interpolation
+                                // Find the corners of this cell by interpolating between registration marks
+                                
+                                // Calculate top edge percentage
+                                let topPercentage = col / 15;
+                                
+                                // Calculate left edge percentage
+                                let leftPercentage = row / 3;
+                                
+                                // Top-left corner of cell
+                                let x1 = lerp(
+                                    lerp(topLeft.center.x, topRight.center.x, topPercentage),
+                                    lerp(bottomLeft.center.x, bottomRight.center.x, topPercentage),
+                                    leftPercentage
+                                );
+                                let y1 = lerp(
+                                    lerp(topLeft.center.y, topRight.center.y, topPercentage),
+                                    lerp(bottomLeft.center.y, bottomRight.center.y, topPercentage),
+                                    leftPercentage
+                                );
+                                
+                                // Calculate next cell positions to determine width/height
+                                let nextColPercentage = (col + 1) / 15;
+                                let nextRowPercentage = (row + 1) / 3;
+                                
+                                // Top-right corner of cell
+                                let x2 = lerp(
+                                    lerp(topLeft.center.x, topRight.center.x, nextColPercentage),
+                                    lerp(bottomLeft.center.x, bottomRight.center.x, nextColPercentage),
+                                    leftPercentage
+                                );
+                                
+                                // Bottom-left corner of cell
+                                let y2 = lerp(
+                                    lerp(topLeft.center.y, topRight.center.y, topPercentage),
+                                    lerp(bottomLeft.center.y, bottomRight.center.y, topPercentage),
+                                    nextRowPercentage
+                                );
+                                
+                                // Calculate width and height
+                                let width = Math.abs(x2 - x1);
+                                let height = Math.abs(y2 - y1);
+                                
+                                // Add cell to the row
+                                rowCells.push({
+                                    x: x1 - width/2,
+                                    y: y1 - height/2,
+                                    width: width,
+                                    height: height,
+                                    center: {
+                                        x: x1,
+                                        y: y1
+                                    }
+                                });
+                            }
+                            
+                            grid.cells.push(rowCells);
+                        }
                         
                         // Display the detected grid
                         outputCtx.drawImage(video, 0, 0, outputCanvas.width, outputCanvas.height);
                         
-                        // Draw the detected grid cells
+                        // Draw the grid cells
                         for (let i = 0; i < grid.cells.length; i++) {
                             for (let j = 0; j < grid.cells[i].length; j++) {
                                 let cell = grid.cells[i][j];
-                                outputCtx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+                                outputCtx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
                                 outputCtx.lineWidth = 2;
                                 outputCtx.strokeRect(cell.x, cell.y, cell.width, cell.height);
+                                
+                                // Draw row and column labels for better usability
+                                if (j === 0) {
+                                    let rowName = '';
+                                    switch(i) {
+                                        case 0: rowName = 'KICK'; break;
+                                        case 1: rowName = 'HAT'; break;
+                                        case 2: rowName = 'SNARE'; break;
+                                        case 3: rowName = 'CLAP'; break;
+                                    }
+                                    outputCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                                    outputCtx.fillRect(cell.x - 60, cell.y, 55, cell.height);
+                                    outputCtx.fillStyle = 'black';
+                                    outputCtx.font = '14px Arial';
+                                    outputCtx.fillText(rowName, cell.x - 55, cell.y + cell.height/2 + 5);
+                                }
+                                
+                                if (i === 0) {
+                                    outputCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                                    outputCtx.fillRect(cell.x, cell.y - 25, cell.width, 20);
+                                    outputCtx.fillStyle = 'black';
+                                    outputCtx.font = '12px Arial';
+                                    outputCtx.fillText(j+1, cell.x + cell.width/2 - 4, cell.y - 10);
+                                }
                             }
                         }
                         
                         isCalibrated = true;
                         document.getElementById('startButton').disabled = false;
-                        alert("Grid detected! You can now start playback.");
+                        alert("Grid successfully detected using registration marks! You can now start playback.");
                     } else {
-                        alert("Could not detect enough rows. Please try again with better lighting or positioning.");
+                        cv.imshow(outputCanvas, displayMat);
+                        alert("Not all corner registration marks were detected. Please ensure all four corner markers are clearly visible.");
                     }
                 } else {
-                    alert("No grid cells detected. Please ensure the grid is clearly visible and try again.");
+                    // If we couldn't find registration marks, try to detect grid cells directly as a fallback
+                    let gridCells = [];
+                    const cellMinArea = canvas.width * canvas.height * 0.0005; // 0.05% of image area
+                    const cellMaxArea = canvas.width * canvas.height * 0.01;   // 1% of image area
+                    
+                    for (let i = 0; i < contours.size(); ++i) {
+                        let cnt = contours.get(i);
+                        let area = cv.contourArea(cnt);
+                        
+                        // Filter by area to find potential grid cells
+                        if (area > cellMinArea && area < cellMaxArea) {
+                            let perimeter = cv.arcLength(cnt, true);
+                            let approx = new cv.Mat();
+                            cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
+                            
+                            // Check if it's a rectangle (4 corners)
+                            if (approx.rows === 4) {
+                                // Get bounding rectangle
+                                let rect = cv.boundingRect(cnt);
+                                
+                                // Check aspect ratio to ensure it's roughly square
+                                let aspectRatio = rect.width / rect.height;
+                                if (aspectRatio > 0.7 && aspectRatio < 1.3) {
+                                    gridCells.push({
+                                        x: rect.x,
+                                        y: rect.y,
+                                        width: rect.width,
+                                        height: rect.height,
+                                        center: {
+                                            x: rect.x + rect.width / 2,
+                                            y: rect.y + rect.height / 2
+                                        }
+                                    });
+                                    
+                                    // Draw for visualization
+                                    cv.rectangle(displayMat, 
+                                        new cv.Point(rect.x, rect.y), 
+                                        new cv.Point(rect.x + rect.width, rect.y + rect.height), 
+                                        new cv.Scalar(0, 255, 0, 255), 2);
+                                }
+                            }
+                            approx.delete();
+                        }
+                    }
+                    
+                    if (gridCells.length > 0) {
+                        // Group cells by row based on y-coordinate
+                        gridCells.sort((a, b) => a.center.y - b.center.y);
+                        
+                        // Find rows by clustering y-coordinates
+                        let rows = [];
+                        let currentRow = [gridCells[0]];
+                        let avgHeight = gridCells[0].height;
+                        
+                        for (let i = 1; i < gridCells.length; i++) {
+                            if (Math.abs(gridCells[i].center.y - gridCells[i-1].center.y) < avgHeight) {
+                                // Same row
+                                currentRow.push(gridCells[i]);
+                            } else {
+                                // New row
+                                rows.push(currentRow);
+                                currentRow = [gridCells[i]];
+                                // Update average height
+                                avgHeight = currentRow[0].height;
+                            }
+                        }
+                        
+                        // Add the last row
+                        if (currentRow.length > 0) {
+                            rows.push(currentRow);
+                        }
+                        
+                        // Sort each row by x-coordinate
+                        rows.forEach(row => {
+                            row.sort((a, b) => a.center.x - b.center.x);
+                        });
+                        
+                        // Use the detected rows to create our grid
+                        if (rows.length >= 4) {
+                            grid.cells = rows.slice(0, 4);
+                            
+                            // Display the detected grid
+                            outputCtx.drawImage(video, 0, 0, outputCanvas.width, outputCanvas.height);
+                            
+                            // Draw the grid cells
+                            for (let i = a = 0; i < grid.cells.length; i++) {
+                                for (let j = 0; j < grid.cells[i].length; j++) {
+                                    let cell = grid.cells[i][j];
+                                    outputCtx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
+                                    outputCtx.lineWidth = 2;
+                                    outputCtx.strokeRect(cell.x, cell.y, cell.width, cell.height);
+                                }
+                            }
+                            
+                            isCalibrated = true;
+                            document.getElementById('startButton').disabled = false;
+                            alert(`Grid detected with ${gridCells.length} cells. You can now start playback.`);
+                        } else {
+                            cv.imshow(outputCanvas, displayMat);
+                            alert(`Not enough rows detected (found ${rows.length}, need 4). Please ensure the grid is clearly visible.`);
+                        }
+                    } else {
+                        cv.imshow(outputCanvas, displayMat);
+                        alert("Could not detect grid cells. Please ensure good lighting and that the grid is clearly visible.");
+                    }
                 }
                 
                 // Clean up
                 hierarchy.delete();
                 contours.delete();
+                displayMat.delete();
             } catch (e) {
                 console.error("Error during calibration:", e);
                 alert("Error during calibration. Please try again.");
@@ -453,7 +688,7 @@
             }
         }
         
-        // Process the video frame to find filled cells
+        // Improved process frame function for better filled cell detection
         function processFrame() {
             if (!isCalibrated) return;
             
@@ -474,6 +709,9 @@
                 // Convert to grayscale
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
                 
+                // Apply Gaussian blur to reduce noise
+                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+                
                 // Reset the drum grid
                 drumGrid = Array(4).fill().map(() => Array(16).fill(0));
                 
@@ -482,16 +720,30 @@
                     for (let j = 0; j < grid.cells[i].length; j++) {
                         let cell = grid.cells[i][j];
                         
+                        // Create a rectangle for the center portion of the cell (to avoid edge effects)
+                        let centerX = Math.round(cell.x + cell.width * 0.25);
+                        let centerY = Math.round(cell.y + cell.height * 0.25);
+                        let centerWidth = Math.round(cell.width * 0.5);
+                        let centerHeight = Math.round(cell.height * 0.5);
+                        
+                        // Ensure the ROI is within bounds
+                        if (centerX < 0) centerX = 0;
+                        if (centerY < 0) centerY = 0;
+                        if (centerX + centerWidth >= gray.cols) centerWidth = gray.cols - centerX - 1;
+                        if (centerY + centerHeight >= gray.rows) centerHeight = gray.rows - centerY - 1;
+                        
+                        // Skip if invalid dimensions
+                        if (centerWidth <= 0 || centerHeight <= 0) continue;
+                        
                         // Extract the region of interest (ROI)
-                        let roi = gray.roi(new cv.Rect(cell.x, cell.y, cell.width, cell.height));
+                        let roi = gray.roi(new cv.Rect(centerX, centerY, centerWidth, centerHeight));
                         
                         // Calculate average intensity in the cell
                         let mean = cv.mean(roi);
                         
                         // Determine if the cell is filled based on intensity
-                        // Lower values indicate darker regions (filled with pen)
                         if (mean[0] < detectionThreshold) {
-                            // Cell is filled - simpler version only has on/off state
+                            // Cell is filled
                             drumGrid[i][j] = 1;
                             
                             // Draw filled overlay
@@ -509,6 +761,11 @@
                 src.delete();
                 gray.delete();
             }
+        }
+        
+        // Linear interpolation helper function
+        function lerp(a, b, t) {
+            return a + t * (b - a);
         }
         
         // Play a sound
@@ -533,7 +790,6 @@
                 
                 // Play the sound
                 source.start(0);
-                console.log(`Playing sound: ${sampleName}`);
             } catch (err) {
                 console.error(`Error playing sound "${sampleName}":`, err);
             }
@@ -562,16 +818,16 @@
                         let sampleToPlay;
                         
                         switch (i) {
-                            case 0: // KICK
+                            case 0: // KICK (top row)
                                 sampleToPlay = 'kick';
                                 break;
-                            case 1: // HAT
+                            case 1: // HAT (second row)
                                 sampleToPlay = 'hat';
                                 break;
-                            case 2: // SNARE
+                            case 2: // SNARE (third row)
                                 sampleToPlay = 'snare';
                                 break;
-                            case 3: // CLAP
+                            case 3: // CLAP (bottom row)
                                 sampleToPlay = 'clap';
                                 break;
                         }
@@ -587,7 +843,7 @@
                 document.getElementById('currentStep').textContent = `Current Step: ${currentStep+1}`;
                 
                 // Move to the next step
-                currentStep = (currentStep + 1) % 16;  // Now with 16 steps
+                currentStep = (currentStep + 1) % 16;
             } catch (error) {
                 console.error("Error in playStep:", error);
             }
