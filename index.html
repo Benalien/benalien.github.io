@@ -450,498 +450,343 @@
             }
         }
         
-        // Improved calibration function that focuses on finding registration marks first
-        function calibrate() {
-            if (!video.videoWidth) {
-                alert("Camera not ready yet. Please wait a moment.");
-                return;
-            }
+// Fixed calibration function that doesn't use cv.getTextSize
+function calibrate() {
+    if (!video.videoWidth) {
+        alert("Camera not ready yet. Please wait a moment.");
+        return;
+    }
+    
+    // Set canvas dimensions to match the video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    outputCanvas.width = video.videoWidth;
+    outputCanvas.height = video.videoHeight;
+    
+    // Capture current video frame
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // Get the image data for processing
+    let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    // Convert to OpenCV format
+    let src = cv.matFromImageData(imageData);
+    let displayMat = src.clone(); // For visualization
+    
+    try {
+        // Step 1: Convert to grayscale for processing
+        let gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        
+        // Step 2: Apply adaptive thresholding which handles uneven lighting better than global threshold
+        let binary = new cv.Mat();
+        cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+        
+        // Step 3: Find contours in the binary image
+        let contours = new cv.MatVector();
+        let hierarchy = new cv.Mat();
+        cv.findContours(binary, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
+        
+        // Step 4: Look specifically for the registration marks (corner squares)
+        let registrationMarks = [];
+        const imgArea = gray.rows * gray.cols;
+        
+        for (let i = 0; i < contours.size(); i++) {
+            let cnt = contours.get(i);
+            let area = cv.contourArea(cnt);
             
-            // Set canvas dimensions to match the video
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            outputCanvas.width = video.videoWidth;
-            outputCanvas.height = video.videoHeight;
+            // Registration marks should be square and within a certain size range
+            // Typically 0.2% to 2% of the image area
+            const minMarkArea = imgArea * 0.002;
+            const maxMarkArea = imgArea * 0.02;
             
-            // Capture current video frame
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            // Get the image data for processing
-            let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            
-            // Convert to OpenCV format
-            let src = cv.matFromImageData(imageData);
-            let displayMat = src.clone(); // For visualization
-            
-            try {
-                // Step 1: Convert to grayscale for processing
-                let gray = new cv.Mat();
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            if (area > minMarkArea && area < maxMarkArea) {
+                // Check if it's approximately square
+                let peri = cv.arcLength(cnt, true);
+                let approx = new cv.Mat();
+                cv.approxPolyDP(cnt, approx, 0.04 * peri, true);
                 
-                // Step 2: Apply adaptive thresholding which handles uneven lighting better than global threshold
-                let binary = new cv.Mat();
-                cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
-                
-                // Step 3: Find contours in the binary image
-                let contours = new cv.MatVector();
-                let hierarchy = new cv.Mat();
-                cv.findContours(binary, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
-                
-                // Step 4: Look specifically for the registration marks (corner squares)
-                let registrationMarks = [];
-                const imgArea = gray.rows * gray.cols;
-                
-                // Draw all contours for debugging
-                // cv.drawContours(displayMat, contours, -1, new cv.Scalar(0, 255, 0, 255), 1);
-                
-                for (let i = 0; i < contours.size(); i++) {
-                    let cnt = contours.get(i);
-                    let area = cv.contourArea(cnt);
+                // Registration marks should be roughly square (4 vertices)
+                if (approx.rows == 4) {
+                    let rect = cv.boundingRect(cnt);
+                    let aspectRatio = rect.width / rect.height;
                     
-                    // Registration marks should be square and within a certain size range
-                    // Typically 0.2% to 2% of the image area
-                    const minMarkArea = imgArea * 0.002;
-                    const maxMarkArea = imgArea * 0.02;
-                    
-                    if (area > minMarkArea && area < maxMarkArea) {
-                        // Check if it's approximately square
-                        let peri = cv.arcLength(cnt, true);
-                        let approx = new cv.Mat();
-                        cv.approxPolyDP(cnt, approx, 0.04 * peri, true);
+                    // Square aspect ratio should be close to 1
+                    if (aspectRatio > 0.8 && aspectRatio < 1.2) {
+                        // Calculate center point
+                        let M = cv.moments(cnt);
+                        let cx = M.m10 / M.m00;
+                        let cy = M.m01 / M.m00;
                         
-                        // Registration marks should be roughly square (4 vertices)
-                        if (approx.rows == 4) {
-                            let rect = cv.boundingRect(cnt);
-                            let aspectRatio = rect.width / rect.height;
-                            
-                            // Square aspect ratio should be close to 1
-                            if (aspectRatio > 0.8 && aspectRatio < 1.2) {
-                                // Calculate center point
-                                let M = cv.moments(cnt);
-                                let cx = M.m10 / M.m00;
-                                let cy = M.m01 / M.m00;
-                                
-                                registrationMarks.push({
-                                    center: { x: cx, y: cy },
-                                    rect: rect,
-                                    contour: cnt.clone()
-                                });
-                                
-                                // Draw for debugging
-                                cv.rectangle(displayMat, 
-                                    new cv.Point(rect.x, rect.y),
-                                    new cv.Point(rect.x + rect.width, rect.y + rect.height),
-                                    new cv.Scalar(255, 0, 0, 255), 2);
-                                    
-                                cv.circle(displayMat, new cv.Point(cx, cy), 5, new cv.Scalar(0, 0, 255, 255), -1);
-                            }
-                        }
-                        approx.delete();
-                    }
-                }
-                
-                // We need at least 4 registration marks to proceed
-                if (registrationMarks.length >= 4) {
-                    console.log(`Found ${registrationMarks.length} potential registration marks`);
-                    document.getElementById('debug-info').textContent = `Found ${registrationMarks.length} registration marks`;
-                    
-                    // If we have more than 4, take the 4 most likely to be corners
-                    if (registrationMarks.length > 4) {
-                        // Sort by distance from each corner of the image
-                        let corners = [
-                            { x: 0, y: 0 },                       // top-left
-                            { x: gray.cols, y: 0 },               // top-right
-                            { x: 0, y: gray.rows },               // bottom-left
-                            { x: gray.cols, y: gray.rows }        // bottom-right
-                        ];
-                        
-                        let cornerMarks = [];
-                        
-                        // For each corner, find the closest mark
-                        corners.forEach(corner => {
-                            let closestMarkIndex = 0;
-                            let closestDistance = Infinity;
-                            
-                            registrationMarks.forEach((mark, index) => {
-                                let distance = Math.sqrt(
-                                    Math.pow(mark.center.x - corner.x, 2) + 
-                                    Math.pow(mark.center.y - corner.y, 2)
-                                );
-                                
-                                if (distance < closestDistance) {
-                                    closestDistance = distance;
-                                    closestMarkIndex = index;
-                                }
-                            });
-                            
-                            cornerMarks.push(registrationMarks[closestMarkIndex]);
+                        registrationMarks.push({
+                            center: { x: cx, y: cy },
+                            rect: rect,
+                            contour: cnt.clone()
                         });
                         
-                        registrationMarks = cornerMarks;
+                        // Draw for debugging
+                        cv.rectangle(displayMat, 
+                            new cv.Point(rect.x, rect.y),
+                            new cv.Point(rect.x + rect.width, rect.y + rect.height),
+                            new cv.Scalar(255, 0, 0, 255), 2);
+                            
+                        cv.circle(displayMat, new cv.Point(cx, cy), 5, new cv.Scalar(0, 0, 255, 255), -1);
                     }
-                    
-                    // Step 5: Sort marks into the correct order (top-left, top-right, bottom-right, bottom-left)
-                    // Sort by y-coordinate first (top vs bottom)
-                    registrationMarks.sort((a, b) => a.center.y - b.center.y);
-                    
-                    // Separate into top and bottom rows
-                    let topMarks = registrationMarks.slice(0, 2);
-                    let bottomMarks = registrationMarks.slice(2, 4);
-                    
-                    // Sort each row by x-coordinate (left vs right)
-                    topMarks.sort((a, b) => a.center.x - b.center.x);
-                    bottomMarks.sort((a, b) => a.center.x - b.center.x);
-                    
-                    // Combine into the correct order
-                    let orderedMarks = [topMarks[0], topMarks[1], bottomMarks[1], bottomMarks[0]];
-                    
-                    // Step 6: Create source and destination points for perspective transform
-                    let srcPoints = [];
-                    orderedMarks.forEach(mark => {
-                        srcPoints.push(mark.center.x, mark.center.y);
-                    });
-                    
-                    // Get average width and height of the marks
-                    let avgWidth = orderedMarks.reduce((sum, mark) => sum + mark.rect.width, 0) / 4;
-                    let avgHeight = orderedMarks.reduce((sum, mark) => sum + mark.rect.height, 0) / 4;
-                    
-                    // Define target grid size - maintain aspect ratio of original grid
-                    const gridAspect = (topMarks[1].center.x - topMarks[0].center.x) / 
-                                      (bottomMarks[0].center.y - topMarks[0].center.y);
-                    
-                    const targetWidth = 800;
-                    const targetHeight = Math.round(targetWidth / gridAspect);
-                    
-                    // Destination points (rectangle)
-                    let dstPoints = [
-                        avgWidth, avgHeight,                              // top-left
-                        targetWidth - avgWidth, avgHeight,                // top-right  
-                        targetWidth - avgWidth, targetHeight - avgHeight, // bottom-right
-                        avgWidth, targetHeight - avgHeight                // bottom-left
-                    ];
-                    
-                    // Create source and destination matrices
-                    let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, srcPoints);
-                    let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, dstPoints);
-                    
-                    // Calculate perspective transform matrix
-                    let perspectiveMatrix = cv.getPerspectiveTransform(srcTri, dstTri);
-                    
-                    // Apply transform to get bird's eye view
-                    let warped = new cv.Mat();
-                    cv.warpPerspective(
-                        gray,           // source image
-                        warped,         // destination image
-                        perspectiveMatrix, // transformation matrix
-                        new cv.Size(targetWidth, targetHeight) // output size
-                    );
-                    
-                    // Step 7: Define grid dimensions and cell size
-                    grid.rows = 4;
-                    grid.cols = 16;
-                    
-                    const cellWidth = (targetWidth - 2 * avgWidth) / grid.cols;
-                    const cellHeight = (targetHeight - 2 * avgHeight) / grid.rows;
-                    
-                    // Step 8: Create grid cells based on the transformed image
-                    grid.cells = [];
-                    
-                    for (let i = 0; i < grid.rows; i++) {
-                        let rowCells = [];
-                        for (let j = 0; j < grid.cols; j++) {
-                            // Calculate cell position in the transformed space
-                            let x = avgWidth + j * cellWidth;
-                            let y = avgHeight + i * cellHeight;
-                            
-                            rowCells.push({
-                                x: x,
-                                y: y,
-                                width: cellWidth,
-                                height: cellHeight,
-                                center: {
-                                    x: x + cellWidth / 2,
-                                    y: y + cellHeight / 2
-                                },
-                                // Store original coordinates by applying inverse transform
-                                original: {
-                                    x: Math.round(x), // We'll calculate these in processFrame
-                                    y: Math.round(y),
-                                    width: Math.round(cellWidth),
-                                    height: Math.round(cellHeight)
-                                }
-                            });
-                        }
-                        grid.cells.push(rowCells);
-                    }
-                    
-                    // Store perspective matrix for use in processFrame
-                    grid.perspectiveMatrix = perspectiveMatrix;
-                    grid.inverseMatrix = new cv.Mat();
-                    cv.invert(perspectiveMatrix, grid.inverseMatrix);
-                    
-                    // Store target dimensions
-                    grid.targetWidth = targetWidth;
-                    grid.targetHeight = targetHeight;
-                    
-                    // Step 9: Draw the transformed grid for visualization
-                    cv.cvtColor(warped, warped, cv.COLOR_GRAY2RGBA);
-                    
-                    // Draw cells
-                    for (let i = 0; i < grid.cells.length; i++) {
-                        for (let j = 0; j < grid.cells[i].length; j++) {
-                            let cell = grid.cells[i][j];
-                            
-                            cv.rectangle(
-                                warped,
-                                new cv.Point(cell.x, cell.y),
-                                new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                new cv.Scalar(0, 255, 0, 255),
-                                2
-                            );
-                            
-                            // Add row labels
-                            if (j === 0) {
-                                let rowName = '';
-                                switch(i) {
-                                    case 0: rowName = 'KICK'; break;
-                                    case 1: rowName = 'HAT'; break;
-                                    case 2: rowName = 'SNARE'; break;
-                                    case 3: rowName = 'CLAP'; break;
-                                }
-                                
-                                // Draw label with background
-                                let textSize = 1;
-                                let thickness = 2;
-                                let baseline = 0;
-                                let textSize2 = new cv.Size(0, 0);
-                                textSize2 = cv.getTextSize(rowName, cv.FONT_HERSHEY_SIMPLEX, textSize, thickness, baseline);
-                                
-                                cv.rectangle(
-                                    warped,
-                                    new cv.Point(cell.x - textSize2.width - 10, cell.y),
-                                    new cv.Point(cell.x - 5, cell.y + cell.height),
-                                    new cv.Scalar(255, 255, 255, 255),
-                                    -1 // filled rectangle
-                                );
-                                
-                                cv.putText(
-                                    warped,
-                                    rowName,
-                                    new cv.Point(cell.x - textSize2.width - 5, cell.y + cell.height/2 + textSize2.height/2),
-                                    cv.FONT_HERSHEY_SIMPLEX,
-                                    textSize,
-                                    new cv.Scalar(0, 0, 0, 255),
-                                    thickness
-                                );
-                            }
-                            
-                            // Add column labels at top
-                            if (i === 0) {
-                                cv.putText(
-                                    warped,
-                                    (j+1).toString(),
-                                    new cv.Point(cell.x + cell.width/2 - 5, cell.y - 10),
-                                    cv.FONT_HERSHEY_SIMPLEX,
-                                    0.5,
-                                    new cv.Scalar(255, 255, 255, 255),
-                                    1
-                                );
-                            }
-                        }
-                    }
-                    
-                    // Display the result
-                    cv.imshow(outputCanvas, warped);
-                    
-                    // Clean up
-                    warped.delete();
-                    srcTri.delete();
-                    dstTri.delete();
-                    
-                    isCalibrated = true;
-                    document.getElementById('startButton').disabled = false;
-                    document.getElementById('debug-info').textContent = "Calibration successful! Grid created with perspective correction.";
-                    
-                } else {
-                    // Not enough registration marks found
-                    console.log(`Only found ${registrationMarks.length} registration marks, need at least 4`);
-                    document.getElementById('debug-info').textContent = `Only found ${registrationMarks.length} registration marks, need 4`;
-                    document.getElementById('debug-info').className = "error";
-                    
-                    // Show what we found for debugging
-                    cv.imshow(outputCanvas, displayMat);
-                    alert(`Only found ${registrationMarks.length} registration marks. Ensure all four corner markers are clearly visible.`);
                 }
-                
-                // Clean up
-                gray.delete();
-                binary.delete();
-                hierarchy.delete();
-                contours.delete();
-                
-            } catch (e) {
-                console.error("Error during calibration:", e);
-                document.getElementById('debug-info').textContent = "Error: " + e.message;
-                document.getElementById('debug-info').className = "error";
-                
-                // Show what we have for debugging
-                cv.imshow(outputCanvas, displayMat);
-                alert("Error during calibration: " + e.message);
-            } finally {
-                // Final cleanup
-                src.delete();
-                displayMat.delete();
+                approx.delete();
             }
         }
         
-        // Improved frame processing with perspective correction
-        function processFrame() {
-            if (!isCalibrated || !grid.perspectiveMatrix) return;
+        // We need at least 4 registration marks to proceed
+        if (registrationMarks.length >= 4) {
+            console.log(`Found ${registrationMarks.length} potential registration marks`);
+            document.getElementById('debug-info').textContent = `Found ${registrationMarks.length} registration marks`;
             
-            try {
-                // Capture current video frame
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            // If we have more than 4, take the 4 most likely to be corners
+            if (registrationMarks.length > 4) {
+                // Sort by distance from each corner of the image
+                let corners = [
+                    { x: 0, y: 0 },                       // top-left
+                    { x: gray.cols, y: 0 },               // top-right
+                    { x: 0, y: gray.rows },               // bottom-left
+                    { x: gray.cols, y: gray.rows }        // bottom-right
+                ];
                 
-                // Get the image data
-                let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                let cornerMarks = [];
                 
-                // Convert to OpenCV format
-                let src = cv.matFromImageData(imageData);
-                let displayImage = src.clone();
-                let gray = new cv.Mat();
-                
-                // Convert to grayscale
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                
-                // Apply perspective transformation
-                let warped = new cv.Mat();
-                cv.warpPerspective(
-                    gray,
-                    warped,
-                    grid.perspectiveMatrix,
-                    new cv.Size(grid.targetWidth, grid.targetHeight)
-                );
-                
-                // Apply Gaussian blur to reduce noise
-                cv.GaussianBlur(warped, warped, new cv.Size(5, 5), 0);
-                
-                // Apply adaptive threshold to handle uneven lighting better
-                let binary = new cv.Mat();
-                cv.adaptiveThreshold(warped, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                    cv.THRESH_BINARY_INV, 11, 2);
-                
-                // Reset the drum grid
-                drumGrid = Array(4).fill().map(() => Array(16).fill(0));
-                
-                // Check each cell for filled status
-                for (let i = 0; i < grid.cells.length; i++) {
-                    for (let j = 0; j < grid.cells[i].length; j++) {
-                        try {
-                            let cell = grid.cells[i][j];
-                            
-                            // Make sure cell has valid dimensions
-                            if (!cell || cell.width <= 0 || cell.height <= 0) continue;
-                            
-                            // Get center of cell for sampling (focus on inner part of cell)
-                            let centerX = Math.round(cell.x + cell.width * 0.25);
-                            let centerY = Math.round(cell.y + cell.height * 0.25);
-                            let centerWidth = Math.round(cell.width * 0.5);
-                            let centerHeight = Math.round(cell.height * 0.5);
-                            
-                            // Ensure we stay within image boundaries
-                            centerX = Math.max(0, Math.min(binary.cols - 1, centerX));
-                            centerY = Math.max(0, Math.min(binary.rows - 1, centerY));
-                            centerWidth = Math.min(centerWidth, binary.cols - centerX);
-                            centerHeight = Math.min(centerHeight, binary.rows - centerY);
-                            
-                            // Skip if invalid dimensions
-                            if (centerWidth <= 0 || centerHeight <= 0) continue;
-                            
-                            // Extract the region of interest (ROI)
-                            let roi = binary.roi(new cv.Rect(centerX, centerY, centerWidth, centerHeight));
-                            
-                            // Calculate what percentage of pixels are active (white) in the binary image
-                            let totalPixels = roi.rows * roi.cols;
-                            let whitePixels = cv.countNonZero(roi);
-                            let fillPercentage = (whitePixels / totalPixels) * 100;
-                            
-                            // Determine if the cell is filled based on percentage of white pixels
-                            // This is more reliable than just using mean intensity
-                            if (fillPercentage > 15) { // Consider filled if more than 15% of pixels are white
-                                // Cell is filled
-                                drumGrid[i][j] = 1;
-                            }
-                            
-                            roi.delete();
-                        } catch (cellError) {
-                            console.error(`Error processing cell [${i},${j}]:`, cellError);
-                            // Continue with the next cell
+                // For each corner, find the closest mark
+                corners.forEach(corner => {
+                    let closestMarkIndex = 0;
+                    let closestDistance = Infinity;
+                    
+                    registrationMarks.forEach((mark, index) => {
+                        let distance = Math.sqrt(
+                            Math.pow(mark.center.x - corner.x, 2) + 
+                            Math.pow(mark.center.y - corner.y, 2)
+                        );
+                        
+                        if (distance < closestDistance) {
+                            closestDistance = distance;
+                            closestMarkIndex = index;
                         }
-                    }
-                }
+                    });
+                    
+                    cornerMarks.push(registrationMarks[closestMarkIndex]);
+                });
                 
-                // Create a color version of warped for display
-                let warpedColor = new cv.Mat();
-                cv.cvtColor(warped, warpedColor, cv.COLOR_GRAY2RGBA);
-                
-                // Draw the grid and highlight filled cells
-                for (let i = 0; i < grid.cells.length; i++) {
-                    for (let j = 0; j < grid.cells[i].length; j++) {
-                        try {
-                            let cell = grid.cells[i][j];
-                            
-                            // Draw base cell
-                            cv.rectangle(
-                                warpedColor,
-                                new cv.Point(cell.x, cell.y),
-                                new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                new cv.Scalar(255, 255, 255, 0.3),
-                                1
-                            );
-                            
-                            // Highlight filled cells
-                            if (drumGrid[i][j] === 1) {
-                                cv.rectangle(
-                                    warpedColor,
-                                    new cv.Point(cell.x, cell.y),
-                                    new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                    new cv.Scalar(255, 0, 0, 0.5),
-                                    -1 // filled rectangle
-                                );
-                            }
-                            
-                            // Highlight current step
-                            if (j === currentStep) {
-                                cv.rectangle(
-                                    warpedColor,
-                                    new cv.Point(cell.x, cell.y),
-                                    new cv.Point(cell.x + cell.width, cell.y + cell.height),
-                                    new cv.Scalar(255, 255, 0, 0.5),
-                                    2
-                                );
-                            }
-                        } catch (drawError) {
-                            // Skip drawing this cell
-                        }
-                    }
-                }
-                
-                // Show the processed view
-                cv.imshow(outputCanvas, warpedColor);
-                
-                // Cleanup
-                src.delete();
-                displayImage.delete();
-                gray.delete();
-                warped.delete();
-                binary.delete();
-                warpedColor.delete();
-                
-            } catch (e) {
-                console.error("Error in processFrame:", e);
-                // Don't crash the main playback loop
+                registrationMarks = cornerMarks;
             }
+            
+            // Step 5: Sort marks into the correct order (top-left, top-right, bottom-right, bottom-left)
+            // Sort by y-coordinate first (top vs bottom)
+            registrationMarks.sort((a, b) => a.center.y - b.center.y);
+            
+            // Separate into top and bottom rows
+            let topMarks = registrationMarks.slice(0, 2);
+            let bottomMarks = registrationMarks.slice(2, 4);
+            
+            // Sort each row by x-coordinate (left vs right)
+            topMarks.sort((a, b) => a.center.x - b.center.x);
+            bottomMarks.sort((a, b) => a.center.x - b.center.x);
+            
+            // Combine into the correct order
+            let orderedMarks = [topMarks[0], topMarks[1], bottomMarks[1], bottomMarks[0]];
+            
+            // Step 6: Create source and destination points for perspective transform
+            let srcPoints = [];
+            orderedMarks.forEach(mark => {
+                srcPoints.push(mark.center.x, mark.center.y);
+            });
+            
+            // Get average width and height of the marks
+            let avgWidth = orderedMarks.reduce((sum, mark) => sum + mark.rect.width, 0) / 4;
+            let avgHeight = orderedMarks.reduce((sum, mark) => sum + mark.rect.height, 0) / 4;
+            
+            // Define target grid size - maintain aspect ratio of original grid
+            const gridAspect = (topMarks[1].center.x - topMarks[0].center.x) / 
+                              (bottomMarks[0].center.y - topMarks[0].center.y);
+            
+            const targetWidth = 800;
+            const targetHeight = Math.round(targetWidth / gridAspect);
+            
+            // Destination points (rectangle)
+            let dstPoints = [
+                avgWidth, avgHeight,                              // top-left
+                targetWidth - avgWidth, avgHeight,                // top-right  
+                targetWidth - avgWidth, targetHeight - avgHeight, // bottom-right
+                avgWidth, targetHeight - avgHeight                // bottom-left
+            ];
+            
+            // Create source and destination matrices
+            let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, srcPoints);
+            let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, dstPoints);
+            
+            // Calculate perspective transform matrix
+            let perspectiveMatrix = cv.getPerspectiveTransform(srcTri, dstTri);
+            
+            // Apply transform to get bird's eye view
+            let warped = new cv.Mat();
+            cv.warpPerspective(
+                gray,           // source image
+                warped,         // destination image
+                perspectiveMatrix, // transformation matrix
+                new cv.Size(targetWidth, targetHeight) // output size
+            );
+            
+            // Step 7: Define grid dimensions and cell size
+            grid.rows = 4;
+            grid.cols = 16;
+            
+            const cellWidth = (targetWidth - 2 * avgWidth) / grid.cols;
+            const cellHeight = (targetHeight - 2 * avgHeight) / grid.rows;
+            
+            // Step 8: Create grid cells based on the transformed image
+            grid.cells = [];
+            
+            for (let i = 0; i < grid.rows; i++) {
+                let rowCells = [];
+                for (let j = 0; j < grid.cols; j++) {
+                    // Calculate cell position in the transformed space
+                    let x = avgWidth + j * cellWidth;
+                    let y = avgHeight + i * cellHeight;
+                    
+                    rowCells.push({
+                        x: x,
+                        y: y,
+                        width: cellWidth,
+                        height: cellHeight,
+                        center: {
+                            x: x + cellWidth / 2,
+                            y: y + cellHeight / 2
+                        },
+                        // Store original coordinates by applying inverse transform
+                        original: {
+                            x: Math.round(x), // We'll calculate these in processFrame
+                            y: Math.round(y),
+                            width: Math.round(cellWidth),
+                            height: Math.round(cellHeight)
+                        }
+                    });
+                }
+                grid.cells.push(rowCells);
+            }
+            
+            // Store perspective matrix for use in processFrame
+            grid.perspectiveMatrix = perspectiveMatrix;
+            grid.inverseMatrix = new cv.Mat();
+            cv.invert(perspectiveMatrix, grid.inverseMatrix);
+            
+            // Store target dimensions
+            grid.targetWidth = targetWidth;
+            grid.targetHeight = targetHeight;
+            
+            // Step 9: Draw the transformed grid for visualization
+            cv.cvtColor(warped, warped, cv.COLOR_GRAY2RGBA);
+            
+            // Draw cells
+            for (let i = 0; i < grid.cells.length; i++) {
+                for (let j = 0; j < grid.cells[i].length; j++) {
+                    let cell = grid.cells[i][j];
+                    
+                    cv.rectangle(
+                        warped,
+                        new cv.Point(cell.x, cell.y),
+                        new cv.Point(cell.x + cell.width, cell.y + cell.height),
+                        new cv.Scalar(0, 255, 0, 255),
+                        2
+                    );
+                    
+                    // Add row labels (with fixed offsets instead of calculated text size)
+                    if (j === 0) {
+                        let rowName = '';
+                        switch(i) {
+                            case 0: rowName = 'KICK'; break;
+                            case 1: rowName = 'HAT'; break;
+                            case 2: rowName = 'SNARE'; break;
+                            case 3: rowName = 'CLAP'; break;
+                        }
+                        
+                        // Fixed-size label background rectangle
+                        const textWidth = 80; // Fixed width estimate for text
+                        
+                        cv.rectangle(
+                            warped,
+                            new cv.Point(cell.x - textWidth - 10, cell.y),
+                            new cv.Point(cell.x - 5, cell.y + cell.height),
+                            new cv.Scalar(255, 255, 255, 255),
+                            -1 // filled rectangle
+                        );
+                        
+                        // Add text with fixed positioning
+                        cv.putText(
+                            warped,
+                            rowName,
+                            new cv.Point(cell.x - textWidth - 5, cell.y + cell.height/2 + 5),
+                            cv.FONT_HERSHEY_SIMPLEX,
+                            0.7, // Fixed text size
+                            new cv.Scalar(0, 0, 0, 255),
+                            2 // thickness
+                        );
+                    }
+                    
+                    // Add column labels at top (simplified)
+                    if (i === 0) {
+                        cv.putText(
+                            warped,
+                            (j+1).toString(),
+                            new cv.Point(cell.x + cell.width/2 - 5, cell.y - 10),
+                            cv.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            new cv.Scalar(255, 255, 255, 255),
+                            1
+                        );
+                    }
+                }
+            }
+            
+            // Display the result
+            cv.imshow(outputCanvas, warped);
+            
+            // Clean up
+            warped.delete();
+            srcTri.delete();
+            dstTri.delete();
+            
+            isCalibrated = true;
+            document.getElementById('startButton').disabled = false;
+            document.getElementById('debug-info').textContent = "Calibration successful! Grid created with perspective correction.";
+            
+        } else {
+            // Not enough registration marks found
+            console.log(`Only found ${registrationMarks.length} registration marks, need at least 4`);
+            document.getElementById('debug-info').textContent = `Only found ${registrationMarks.length} registration marks, need 4`;
+            document.getElementById('debug-info').className = "error";
+            
+            // Show what we found for debugging
+            cv.imshow(outputCanvas, displayMat);
+            alert(`Only found ${registrationMarks.length} registration marks. Ensure all four corner markers are clearly visible.`);
         }
+        
+        // Clean up
+        gray.delete();
+        binary.delete();
+        hierarchy.delete();
+        contours.delete();
+        
+    } catch (e) {
+        console.error("Error during calibration:", e);
+        document.getElementById('debug-info').textContent = "Error: " + e.message;
+        document.getElementById('debug-info').className = "error";
+        
+        // Show what we have for debugging
+        cv.imshow(outputCanvas, displayMat);
+        alert("Error during calibration: " + e.message);
+    } finally {
+        // Final cleanup
+        src.delete();
+        displayMat.delete();
+    }
+}
         
         // Play a sound
         function playSound(sampleName) {
