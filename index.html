@@ -222,21 +222,25 @@
 
         // Function to start the camera when the user clicks the button
         function startCamera() {
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                // Use the simplest possible constraint
-                navigator.mediaDevices.getUserMedia({ video: true })
-                    .then(function(stream) {
-                        video.srcObject = stream;
-                        document.getElementById('calibrateButton').disabled = false;
-                    })
-                    .catch(function(error) {
-                        console.error("Error accessing camera:", error);
-                        alert("Could not access camera. Please ensure camera permissions are enabled in your browser settings and try again.");
-                    });
-            } else {
-                alert("Your browser doesn't support camera access.");
-            }
-        }
+                    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                        // Use back camera by specifying facingMode: "environment"
+                        navigator.mediaDevices.getUserMedia({ 
+                            video: { 
+                                facingMode: "environment" 
+                            } 
+                        })
+                            .then(function(stream) {
+                                video.srcObject = stream;
+                                document.getElementById('calibrateButton').disabled = false;
+                            })
+                            .catch(function(error) {
+                                console.error("Error accessing camera:", error);
+                                alert("Could not access camera. Please ensure camera permissions are enabled in your browser settings and try again.");
+                            });
+                    } else {
+                        alert("Your browser doesn't support camera access.");
+                    }
+                }
         
         // Load audio samples
         function loadAudioSamples() {
