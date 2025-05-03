@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Drum Pattern Grid Detector</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/opencv.js/4.5.5/opencv.js"></script>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -27,7 +26,7 @@
         .video-container, .results-container {
             margin: 20px 0;
         }
-        #videoElement, #canvasOutput {
+        #videoElement, #canvasOutput, #debugCanvas {
             width: 100%;
             max-width: 640px;
             height: auto;
@@ -36,7 +35,7 @@
             display: block;
             margin: 0 auto;
         }
-        #canvasOutput {
+        #canvasOutput, #debugCanvas {
             margin-top: 10px;
         }
         .button-container {
@@ -44,6 +43,7 @@
             justify-content: center;
             margin: 15px 0;
             gap: 10px;
+            flex-wrap: wrap;
         }
         button {
             background-color: #4CAF50;
@@ -72,6 +72,12 @@
         #captureBtn:hover {
             background-color: #d32f2f;
         }
+        #manualBtn {
+            background-color: #2196F3;
+        }
+        #manualBtn:hover {
+            background-color: #0b7dda;
+        }
         .grid-container {
             margin-top: 20px;
             overflow-x: auto;
@@ -84,6 +90,8 @@
             border: 1px solid #ddd;
             padding: 8px;
             text-align: center;
+            width: 30px;
+            height: 30px;
         }
         .drum-grid th {
             background-color: #f2f2f2;
@@ -94,9 +102,22 @@
             font-weight: bold;
             text-align: right;
             padding-right: 15px;
+            width: auto;
         }
         .filled {
             background-color: #333;
+            position: relative;
+        }
+        .filled::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 16px;
+            height: 16px;
+            background-color: #555;
+            border-radius: 2px;
         }
         .loading {
             display: none;
@@ -135,6 +156,13 @@
             border: 1px solid #ddd;
             border-radius: 5px;
         }
+        .debug-options {
+            margin: 10px 0;
+            text-align: center;
+        }
+        #debugCanvas {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -144,9 +172,16 @@
         <div class="video-container">
             <video id="videoElement" autoplay playsinline></video>
             <canvas id="canvasOutput"></canvas>
+            <canvas id="debugCanvas"></canvas>
+            <div class="debug-options">
+                <label>
+                    <input type="checkbox" id="showDebug"> Show Debug View
+                </label>
+            </div>
             <div class="button-container">
                 <button id="startBtn">Start Camera</button>
                 <button id="captureBtn" disabled>Capture Grid</button>
+                <button id="manualBtn">Manual Mode</button>
             </div>
             <div class="status" id="status">Camera not started</div>
         </div>
@@ -170,29 +205,32 @@
     </div>
 
     <script>
-        // Wait for OpenCV.js to be loaded
-        function onOpenCvReady() {
-            document.getElementById('status').textContent = 'OpenCV.js loaded. Press "Start Camera" to begin.';
-            document.getElementById('startBtn').disabled = false;
-        }
+        // DOM Elements
+        const video = document.getElementById('videoElement');
+        const canvasOutput = document.getElementById('canvasOutput');
+        const debugCanvas = document.getElementById('debugCanvas');
+        const startButton = document.getElementById('startBtn');
+        const captureButton = document.getElementById('captureBtn');
+        const manualButton = document.getElementById('manualBtn');
+        const statusText = document.getElementById('status');
+        const gridContainer = document.getElementById('gridContainer');
+        const loadingElement = document.getElementById('loading');
+        const exportSection = document.getElementById('exportSection');
+        const exportData = document.getElementById('exportData');
+        const copyBtn = document.getElementById('copyBtn');
+        const showDebugCheckbox = document.getElementById('showDebug');
 
-        // Variables
-        let video = document.getElementById('videoElement');
-        let canvasOutput = document.getElementById('canvasOutput');
-        let startButton = document.getElementById('startBtn');
-        let captureButton = document.getElementById('captureBtn');
-        let statusText = document.getElementById('status');
-        let gridContainer = document.getElementById('gridContainer');
-        let loadingElement = document.getElementById('loading');
-        let exportSection = document.getElementById('exportSection');
-        let exportData = document.getElementById('exportData');
-        let copyBtn = document.getElementById('copyBtn');
-
+        // Global variables
         let streaming = false;
         let stream = null;
         let detectedGrid = [];
         const instruments = ['KICK', 'HAT', 'SNARE', 'CLAP', 'TOM', 'CRASH', 'COW', 'TAMB'];
         const steps = 16;
+
+        // Debug mode toggle
+        showDebugCheckbox.addEventListener('change', function() {
+            debugCanvas.style.display = this.checked ? 'block' : 'none';
+        });
 
         // Start camera
         startButton.addEventListener('click', function() {
@@ -209,6 +247,22 @@
         // Capture current frame
         captureButton.addEventListener('click', function() {
             captureFrame();
+        });
+
+        // Switch to manual mode
+        manualButton.addEventListener('click', function() {
+            // Hide camera elements
+            video.style.display = 'none';
+            canvasOutput.style.display = 'none';
+            debugCanvas.style.display = 'none';
+            showDebugCheckbox.parentElement.style.display = 'none';
+            captureButton.disabled = true;
+            
+            // Show grid section
+            exportSection.style.display = 'block';
+            
+            // Initialize manual mode
+            manualDetectGrid();
         });
 
         // Copy exported data to clipboard
@@ -232,6 +286,15 @@
                     stream = s;
                     video.srcObject = s;
                     video.play();
+                    
+                    // Set canvas size once video metadata is loaded
+                    video.addEventListener('loadedmetadata', function() {
+                        canvasOutput.width = video.videoWidth;
+                        canvasOutput.height = video.videoHeight;
+                        debugCanvas.width = video.videoWidth;
+                        debugCanvas.height = video.videoHeight;
+                    });
+                    
                     streaming = true;
                     startButton.textContent = 'Stop Camera';
                     captureButton.disabled = false;
@@ -269,13 +332,8 @@
                     canvasOutput.height = video.videoHeight;
                     ctx.drawImage(video, 0, 0, canvasOutput.width, canvasOutput.height);
                     
-                    const imgData = ctx.getImageData(0, 0, canvasOutput.width, canvasOutput.height);
-                    
-                    // Process the image using OpenCV
-                    let src = cv.matFromImageData(imgData);
-                    processImage(src);
-                    
-                    src.delete();
+                    // Process the image
+                    processImage(canvasOutput);
                 } catch (err) {
                     console.error('Error processing frame:', err);
                     statusText.textContent = 'Error processing image: ' + err.message;
@@ -285,49 +343,64 @@
             }, 100);
         }
 
-        function processImage(src) {
+        function processImage(canvas) {
             try {
-                // Convert to grayscale
-                let gray = new cv.Mat();
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                const ctx = canvas.getContext('2d');
+                const width = canvas.width;
+                const height = canvas.height;
                 
-                // Apply threshold to get binary image
-                let binary = new cv.Mat();
-                cv.threshold(gray, binary, 150, 255, cv.THRESH_BINARY_INV);
+                // Get image data
+                const imageData = ctx.getImageData(0, 0, width, height);
+                const data = imageData.data;
                 
-                // Find contours
-                let contours = new cv.MatVector();
-                let hierarchy = new cv.Mat();
-                cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                // Create grayscale version for processing
+                const grayscale = new Uint8Array(width * height);
+                for (let i = 0; i < data.length; i += 4) {
+                    // Convert RGB to grayscale using luminance formula
+                    grayscale[i/4] = Math.round(0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2]);
+                }
                 
-                // Find the registration marks (the QR-code-like squares in corners)
-                let registrationMarks = findRegistrationMarks(contours, src.cols, src.rows);
+                // Draw grayscale image on debug canvas
+                if (showDebugCheckbox.checked) {
+                    const debugCtx = debugCanvas.getContext('2d');
+                    const debugImageData = debugCtx.createImageData(width, height);
+                    const debugData = debugImageData.data;
+                    
+                    for (let i = 0; i < grayscale.length; i++) {
+                        const val = grayscale[i];
+                        const offset = i * 4;
+                        debugData[offset] = val;
+                        debugData[offset + 1] = val;
+                        debugData[offset + 2] = val;
+                        debugData[offset + 3] = 255;
+                    }
+                    
+                    debugCtx.putImageData(debugImageData, 0, 0);
+                }
+                
+                // Find registration marks
+                const registrationMarks = findRegistrationMarks(grayscale, width, height);
                 
                 if (registrationMarks.length === 4) {
                     // Sort registration marks in order: top-left, top-right, bottom-right, bottom-left
                     sortRegistrationMarks(registrationMarks);
                     
-                    // Apply perspective transform
-                    let transformedImage = applyPerspectiveTransform(gray, registrationMarks);
+                    // Draw the marks on the output canvas for debugging
+                    drawRegistrationMarks(ctx, registrationMarks);
+                    
+                    // Define the grid area based on registration marks
+                    const gridArea = defineGridArea(registrationMarks);
                     
                     // Detect the grid cells
-                    detectedGrid = detectGridCells(transformedImage);
+                    detectedGrid = detectGridCells(grayscale, width, height, gridArea);
                     
                     // Display the results
                     displayResults(detectedGrid);
                     
-                    transformedImage.delete();
-                    
                     statusText.textContent = 'Grid detected and processed successfully!';
                 } else {
-                    displayError("Could not detect all 4 registration marks. Please try again with better lighting and alignment.");
+                    displayError(`Found ${registrationMarks.length} registration marks, need exactly 4. Please try again with better lighting and alignment.`);
                 }
-                
-                // Clean up
-                gray.delete();
-                binary.delete();
-                contours.delete();
-                hierarchy.delete();
             } catch (err) {
                 console.error('Error in processImage:', err);
                 displayError("Error processing image: " + err.message);
@@ -337,68 +410,119 @@
             }
         }
 
-        function findRegistrationMarks(contours, width, height) {
-            const minSize = Math.min(width, height) * 0.02; // Min size of registration mark
-            const maxSize = Math.min(width, height) * 0.15; // Max size of registration mark
+        function findRegistrationMarks(grayscale, width, height) {
+            // Perform basic thresholding
+            const threshold = 100; // Threshold for black (adjust as needed)
+            const binaryImage = new Uint8Array(grayscale.length);
             
-            let possibleMarks = [];
+            for (let i = 0; i < grayscale.length; i++) {
+                binaryImage[i] = grayscale[i] < threshold ? 1 : 0; // 1 for black, 0 for white
+            }
             
-            for (let i = 0; i < contours.size(); ++i) {
-                const contour = contours.get(i);
-                const area = cv.contourArea(contour);
+            // Draw binary image on debug canvas if debug mode is on
+            if (showDebugCheckbox.checked) {
+                const debugCtx = debugCanvas.getContext('2d');
+                const debugImageData = debugCtx.createImageData(width, height);
+                const debugData = debugImageData.data;
                 
-                // Skip if too small or too large
-                if (area < minSize * minSize || area > maxSize * maxSize) continue;
-                
-                // Check if it's approximately square
-                let perimeter = cv.arcLength(contour, true);
-                let approx = new cv.Mat();
-                cv.approxPolyDP(contour, approx, 0.04 * perimeter, true);
-                
-                if (approx.rows === 4) {
-                    let rect = cv.boundingRect(contour);
-                    let aspectRatio = rect.width / rect.height;
-                    
-                    // Check if it's square-ish (aspect ratio close to 1)
-                    if (aspectRatio > 0.8 && aspectRatio < 1.2) {
-                        let center = {
-                            x: rect.x + rect.width / 2,
-                            y: rect.y + rect.height / 2
-                        };
-                        possibleMarks.push({
-                            center: center,
-                            rect: rect,
-                            contour: contour
-                        });
-                    }
+                for (let i = 0; i < binaryImage.length; i++) {
+                    const val = binaryImage[i] ? 0 : 255;
+                    const offset = i * 4;
+                    debugData[offset] = val;
+                    debugData[offset + 1] = val;
+                    debugData[offset + 2] = val;
+                    debugData[offset + 3] = 255;
                 }
                 
-                approx.delete();
+                debugCtx.putImageData(debugImageData, 0, 0);
             }
             
-            // If we found too many possible marks, filter by position (likely in the corners)
-            if (possibleMarks.length > 4) {
-                // Calculate distance from each corner
-                possibleMarks.forEach(mark => {
-                    mark.distTL = distanceSquared(mark.center, {x: 0, y: 0});
-                    mark.distTR = distanceSquared(mark.center, {x: width, y: 0});
-                    mark.distBR = distanceSquared(mark.center, {x: width, y: height});
-                    mark.distBL = distanceSquared(mark.center, {x: 0, y: height});
-                    mark.minDist = Math.min(mark.distTL, mark.distTR, mark.distBR, mark.distBL);
-                });
-                
-                // Sort by minimum distance to any corner
-                possibleMarks.sort((a, b) => a.minDist - b.minDist);
-                
-                // Take the top 4
-                possibleMarks = possibleMarks.slice(0, 4);
-            }
+            // Scan the image in sections looking for registration marks
+            // Registration marks are square black patterns in the corners
+            const sections = [
+                { x: 0, y: 0, width: width / 3, height: height / 3 }, // Top-left
+                { x: width * 2/3, y: 0, width: width / 3, height: height / 3 }, // Top-right
+                { x: width * 2/3, y: height * 2/3, width: width / 3, height: height / 3 }, // Bottom-right
+                { x: 0, y: height * 2/3, width: width / 3, height: height / 3 } // Bottom-left
+            ];
             
-            return possibleMarks;
+            const registrationMarks = [];
+            
+            // For each corner section, find a potential registration mark
+            sections.forEach(section => {
+                const mark = findRegistrationMarkInSection(binaryImage, width, height, section);
+                if (mark) {
+                    registrationMarks.push(mark);
+                }
+            });
+            
+            return registrationMarks;
         }
 
-        function distanceSquared(p1, p2) {
-            return Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2);
+        function findRegistrationMarkInSection(binaryImage, width, height, section) {
+            const startX = Math.floor(section.x);
+            const startY = Math.floor(section.y);
+            const endX = Math.floor(section.x + section.width);
+            const endY = Math.floor(section.y + section.height);
+            
+            // We're looking for a dense black square
+            const minSize = Math.min(width, height) * 0.02; // Minimum size for a registration mark
+            const maxSize = Math.min(width, height) * 0.15; // Maximum size for a registration mark
+            
+            // Initialize variables to track the best candidate
+            let bestCandidate = null;
+            let bestScore = 0;
+            
+            // Scan in a grid pattern to avoid checking every pixel
+            const step = Math.floor(minSize / 4);
+            
+            for (let y = startY; y < endY; y += step) {
+                for (let x = startX; x < endX; x += step) {
+                    // Skip if we're too close to the edge
+                    if (x < minSize || y < minSize || x > width - minSize || y > height - minSize) {
+                        continue;
+                    }
+                    
+                    // Check if this is a potential center of a registration mark
+                    if (binaryImage[y * width + x] === 1) { // If this pixel is black
+                        // Scan different sizes from the minimum to maximum
+                        for (let size = Math.floor(minSize); size <= Math.floor(maxSize); size += step) {
+                            const halfSize = Math.floor(size / 2);
+                            
+                            // Count black pixels in this square
+                            let blackCount = 0;
+                            let totalPixels = 0;
+                            
+                            for (let sy = y - halfSize; sy <= y + halfSize; sy++) {
+                                for (let sx = x - halfSize; sx <= x + halfSize; sx++) {
+                                    // Check bounds
+                                    if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
+                                        totalPixels++;
+                                        if (binaryImage[sy * width + sx] === 1) {
+                                            blackCount++;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Calculate the black pixel ratio
+                            const blackRatio = blackCount / totalPixels;
+                            
+                            // Registration marks should have a high density of black pixels (>50%)
+                            if (blackRatio > 0.5 && blackRatio > bestScore) {
+                                bestScore = blackRatio;
+                                bestCandidate = {
+                                    center: { x, y },
+                                    size: size,
+                                    blackRatio: blackRatio
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return bestCandidate;
         }
 
         function sortRegistrationMarks(marks) {
@@ -414,82 +538,84 @@
             
             // Sort based on their position
             marks.sort((a, b) => {
-                if (a.isTop && !b.isTop) return -1;
-                if (!a.isTop && b.isTop) return 1;
-                if (a.isLeft && !b.isLeft) return -1;
-                if (!a.isLeft && b.isLeft) return 1;
+                if (a.isTop !== b.isTop) return a.isTop ? -1 : 1;
+                if (a.isLeft !== b.isLeft) return a.isLeft ? -1 : 1;
                 return 0;
             });
             
-            // Now the marks should be in order: top-left, top-right, bottom-right, bottom-left
-            // Reorder to ensure they are in the correct sequence for perspective transform
-            let sortedMarks = [
-                marks.find(m => m.isTop && m.isLeft),    // top-left
-                marks.find(m => m.isTop && !m.isLeft),   // top-right
-                marks.find(m => !m.isTop && !m.isLeft),  // bottom-right
-                marks.find(m => !m.isTop && m.isLeft)    // bottom-left
-            ];
+            // Ensure we have exactly 4 marks and they are in correct order:
+            // 0: top-left, 1: top-right, 2: bottom-right, 3: bottom-left
+            while (marks.length > 4) marks.pop();
             
-            // Replace the original array contents
-            marks.length = 0;
-            sortedMarks.forEach(mark => {
-                if (mark) marks.push(mark);
+            // Make sure marks are properly ordered
+            if (marks.length === 4) {
+                const expectedPositions = [
+                    { isTop: true, isLeft: true },   // top-left
+                    { isTop: true, isLeft: false },  // top-right
+                    { isTop: false, isLeft: false }, // bottom-right
+                    { isTop: false, isLeft: true }   // bottom-left
+                ];
+                
+                for (let i = 0; i < 4; i++) {
+                    if (marks[i].isTop !== expectedPositions[i].isTop || marks[i].isLeft !== expectedPositions[i].isLeft) {
+                        // If position doesn't match, try to find the correct mark
+                        for (let j = i + 1; j < 4; j++) {
+                            if (marks[j].isTop === expectedPositions[i].isTop && marks[j].isLeft === expectedPositions[i].isLeft) {
+                                // Swap to correct position
+                                [marks[i], marks[j]] = [marks[j], marks[i]];
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function drawRegistrationMarks(ctx, marks) {
+            ctx.lineWidth = 3;
+            
+            // Color coding for different corners
+            const colors = ['red', 'green', 'blue', 'purple'];
+            
+            marks.forEach((mark, index) => {
+                const halfSize = mark.size / 2;
+                ctx.strokeStyle = colors[index % colors.length];
+                ctx.beginPath();
+                ctx.rect(
+                    mark.center.x - halfSize, 
+                    mark.center.y - halfSize,
+                    mark.size,
+                    mark.size
+                );
+                ctx.stroke();
+                
+                // Draw center point
+                ctx.beginPath();
+                ctx.arc(mark.center.x, mark.center.y, 5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Label
+                ctx.fillStyle = colors[index % colors.length];
+                ctx.font = '16px Arial';
+                ctx.fillText(index, mark.center.x + halfSize + 5, mark.center.y);
             });
         }
 
-        function applyPerspectiveTransform(src, marks) {
-            // Create source points from registration marks
-            let srcPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                marks[0].center.x, marks[0].center.y,  // top-left
-                marks[1].center.x, marks[1].center.y,  // top-right
-                marks[2].center.x, marks[2].center.y,  // bottom-right
-                marks[3].center.x, marks[3].center.y   // bottom-left
-            ]);
-            
-            // Target size for the transformed image (fixed ratio)
-            const targetWidth = 800;
-            const targetHeight = 600;
-            
-            // Create destination points (rectangle)
-            let dstPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                0, 0,                     // top-left
-                targetWidth, 0,           // top-right
-                targetWidth, targetHeight, // bottom-right
-                0, targetHeight           // bottom-left
-            ]);
-            
-            // Calculate perspective transform matrix
-            let M = cv.getPerspectiveTransform(srcPoints, dstPoints);
-            
-            // Apply perspective transformation
-            let dst = new cv.Mat();
-            cv.warpPerspective(src, dst, M, new cv.Size(targetWidth, targetHeight));
-            
-            // Clean up
-            srcPoints.delete();
-            dstPoints.delete();
-            M.delete();
-            
-            return dst;
+        function defineGridArea(marks) {
+            // Define the grid area using the 4 registration marks
+            // This creates a mapping to help us sample grid cells even with perspective distortion
+            return {
+                topLeft: marks[0].center,
+                topRight: marks[1].center,
+                bottomRight: marks[2].center,
+                bottomLeft: marks[3].center
+            };
         }
 
-        function detectGridCells(img) {
+        function detectGridCells(grayscale, width, height, gridArea) {
             // Grid dimensions
             const numRows = 8;  // 8 instruments
             const numCols = 16; // 16 time steps
-            
-            // Calculate cell dimensions
-            const imgWidth = img.cols;
-            const imgHeight = img.rows;
-            
-            // Estimate the grid area (excluding margins)
-            const gridMarginX = imgWidth * 0.1;
-            const gridMarginY = imgHeight * 0.15;
-            const gridWidth = imgWidth - 2 * gridMarginX;
-            const gridHeight = imgHeight - 2 * gridMarginY;
-            
-            const cellWidth = gridWidth / numCols;
-            const cellHeight = gridHeight / numRows;
             
             // Initialize result grid
             let grid = Array(numRows).fill().map(() => Array(numCols).fill(false));
@@ -497,43 +623,77 @@
             // For each cell, check if it's filled
             for (let row = 0; row < numRows; row++) {
                 for (let col = 0; col < numCols; col++) {
-                    // Calculate cell center
-                    const cellX = Math.floor(gridMarginX + col * cellWidth + cellWidth / 2);
-                    const cellY = Math.floor(gridMarginY + row * cellHeight + cellHeight / 2);
+                    // Calculate normalized cell position (0-1 range for both x and y)
+                    const cellX = (col + 0.5) / numCols;
+                    const cellY = (row + 0.5) / numRows;
                     
-                    // Get a sample region around the center
-                    const sampleRadius = Math.floor(Math.min(cellWidth, cellHeight) * 0.3);
+                    // Map to actual pixel coordinates using bilinear interpolation
+                    const point = mapPointToQuad(
+                        cellX, cellY,
+                        gridArea.topLeft,
+                        gridArea.topRight,
+                        gridArea.bottomRight,
+                        gridArea.bottomLeft
+                    );
                     
-                    let filledPixels = 0;
+                    // Sample area around the point to determine if cell is filled
+                    const sampleSize = Math.min(
+                        distanceBetweenPoints(gridArea.topLeft, gridArea.topRight) / numCols,
+                        distanceBetweenPoints(gridArea.topLeft, gridArea.bottomLeft) / numRows
+                    ) * 0.3;
+                    
+                    let blackPixelCount = 0;
                     let totalPixels = 0;
                     
-                    // Sample pixels in a square around the center
-                    for (let y = -sampleRadius; y <= sampleRadius; y++) {
-                        for (let x = -sampleRadius; x <= sampleRadius; x++) {
-                            const sX = cellX + x;
-                            const sY = cellY + y;
+                    for (let dy = -sampleSize; dy <= sampleSize; dy += 1) {
+                        for (let dx = -sampleSize; dx <= sampleSize; dx += 1) {
+                            const sampleX = Math.round(point.x + dx);
+                            const sampleY = Math.round(point.y + dy);
                             
-                            // Ensure we're within image bounds
-                            if (sX >= 0 && sX < imgWidth && sY >= 0 && sY < imgHeight) {
-                                // Get pixel value (0-255, where 0 is black)
-                                const pixelValue = img.ucharPtr(sY, sX)[0];
-                                totalPixels++;
+                            // Check if sample point is within image bounds
+                            if (sampleX >= 0 && sampleX < width && sampleY >= 0 && sampleY < height) {
+                                const pixelIndex = sampleY * width + sampleX;
+                                const pixelValue = grayscale[pixelIndex];
                                 
-                                // Consider dark pixels as filled (threshold at 100)
+                                totalPixels++;
+                                // Check if pixel is dark (potential fill)
                                 if (pixelValue < 100) {
-                                    filledPixels++;
+                                    blackPixelCount++;
                                 }
                             }
                         }
                     }
                     
-                    // If more than 30% of sampled pixels are dark, consider the cell filled
-                    const filledRatio = filledPixels / totalPixels;
-                    grid[row][col] = filledRatio > 0.3;
+                    // If enough pixels are black, consider cell filled
+                    const blackRatio = blackPixelCount / totalPixels;
+                    grid[row][col] = blackRatio > 0.3;
                 }
             }
             
             return grid;
+        }
+
+        function mapPointToQuad(normalizedX, normalizedY, topLeft, topRight, bottomRight, bottomLeft) {
+            // Maps a point in normalized coordinates (0-1) to actual pixel coordinates
+            // using bilinear interpolation between the four corners of the quadrilateral
+            
+            // Top edge interpolation
+            const topX = topLeft.x + normalizedX * (topRight.x - topLeft.x);
+            const topY = topLeft.y + normalizedX * (topRight.y - topLeft.y);
+            
+            // Bottom edge interpolation
+            const bottomX = bottomLeft.x + normalizedX * (bottomRight.x - bottomLeft.x);
+            const bottomY = bottomLeft.y + normalizedX * (bottomRight.y - bottomLeft.y);
+            
+            // Final interpolation between top and bottom points
+            return {
+                x: topX + normalizedY * (bottomX - topX),
+                y: topY + normalizedY * (bottomY - topY)
+            };
+        }
+
+        function distanceBetweenPoints(p1, p2) {
+            return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
         }
 
         function displayResults(grid) {
@@ -587,6 +747,49 @@
             exportSection.style.display = 'block';
         }
 
+        // Manual mode for creating grid without image processing
+        function manualDetectGrid() {
+            const gridContainer = document.getElementById('gridContainer');
+            // Create empty grid
+            let emptyGrid = Array(instruments.length).fill().map(() => Array(steps).fill(false));
+            displayResults(emptyGrid);
+            
+            // Make the table cells interactive
+            const cells = document.querySelectorAll('.drum-grid td:not(.instrument)');
+            cells.forEach(cell => {
+                cell.style.cursor = 'pointer';
+                cell.addEventListener('click', function() {
+                    this.classList.toggle('filled');
+                    
+                    // Update the grid data
+                    updateGridFromTable();
+                });
+            });
+            
+            document.getElementById('status').textContent = 'Manual mode activated. Click cells to toggle them on/off.';
+            
+            // Add a button to update grid data
+            const updateBtn = document.createElement('button');
+            updateBtn.textContent = 'Update Export Data';
+            updateBtn.addEventListener('click', updateGridFromTable);
+            document.querySelector('.button-container').appendChild(updateBtn);
+        }
+        
+        function updateGridFromTable() {
+            const rows = document.querySelectorAll('.drum-grid tr:not(:first-child)');
+            let updatedGrid = Array(instruments.length).fill().map(() => Array(steps).fill(false));
+            
+            rows.forEach((row, rowIndex) => {
+                const cells = row.querySelectorAll('td:not(.instrument)');
+                cells.forEach((cell, colIndex) => {
+                    updatedGrid[rowIndex][colIndex] = cell.classList.contains('filled');
+                });
+            });
+            
+            // Update export data
+            generateExportData(updatedGrid);
+        }
+
         function generateExportData(grid) {
             let data = {};
             
@@ -610,34 +813,16 @@
             console.error(message);
         }
 
-        // Initialize empty grid on load
+        // Initialize an empty grid on load
         function initializeEmptyGrid() {
             let emptyGrid = Array(instruments.length).fill().map(() => Array(steps).fill(false));
             displayResults(emptyGrid);
         }
 
-        // Initialize when OpenCV is loaded
-        function onOpenCvReady() {
-            document.getElementById('status').textContent = 'OpenCV.js loaded. Press "Start Camera" to begin.';
-            document.getElementById('startBtn').disabled = false;
+        // Initialize when page loads
+        window.addEventListener('load', function() {
             initializeEmptyGrid();
-        }
-
-        // Check if OpenCV.js is already loaded
-        if (typeof cv !== 'undefined') {
-            onOpenCvReady();
-        } else {
-            // If not, we'll wait for the script to load
-            var script = document.createElement('script');
-            script.setAttribute('async', '');
-            script.setAttribute('type', 'text/javascript');
-            script.addEventListener('load', onOpenCvReady);
-            script.addEventListener('error', function() {
-                document.getElementById('status').textContent = 'Failed to load OpenCV.js. Please check your internet connection.';
-            });
-            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/opencv.js/4.5.5/opencv.js';
-            document.head.appendChild(script);
-        }
+        });
     </script>
 </body>
 </html>
