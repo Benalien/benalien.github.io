@@ -1,650 +1,643 @@
-<div id="debug" style="display:none;">
-    <canvas id="thresholdCanvas"></canvas>
-    <canvas id="warpedCanvas"></canvas>
-    <canvas id="cellsCanvas"></canvas>
-</div><!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Drum Grid Detector</title>
-<style>
-body {
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 20px;
-    text-align: center;
-}
-.container {
-    max-width: 800px;
-    margin: 0 auto;
-}
-video, canvas {
-    max-width: 100%;
-    border: 1px solid #ddd;
-    margin-top: 10px;
-}
-.button {
-    background-color: #4CAF50;
-    border: none;
-    color: white;
-    padding: 10px 20px;
-    text-align: center;
-    display: inline-block;
-    font-size: 16px;
-    margin: 10px 5px;
-    cursor: pointer;
-    border-radius: 4px;
-}
-.button:disabled {
-    background-color: #cccccc;
-    cursor: not-allowed;
-}
-.grid-container {
-    display: grid;
-    grid-template-columns: auto repeat(16, 1fr);
-    gap: 2px;
-    margin-top: 20px;
-}
-.grid-cell {
-    width: 100%;
-    aspect-ratio: 1;
-    border: 1px solid #000;
-}
-.row-label {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    padding-right: 10px;
-    font-weight: bold;
-}
-.filled {
-    background-color: #000;
-}
-.loading {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.7);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-    color: white;
-}
-.spinner {
-    border: 8px solid #f3f3f3;
-    border-top: 8px solid #3498db;
-    border-radius: 50%;
-    width: 50px;
-    height: 50px;
-    animation: spin 2s linear infinite;
-    margin-bottom: 20px;
-}
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-#debug {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 10px;
-    margin-top: 10px;
-}
-.controls {
-    background-color: #f5f5f5;
-    padding: 15px;
-    border-radius: 5px;
-    margin: 15px 0;
-}
-.control-group {
-    display: flex;
-    align-items: center;
-    margin: 10px 0;
-}
-.control-group label {
-    width: 150px;
-    text-align: right;
-    margin-right: 10px;
-    font-weight: bold;
-}
-.control-group input {
-    width: 200px;
-}
-.control-group span {
-    margin-left: 10px;
-    width: 40px;
-    text-align: left;
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drum Pattern Grid Detector</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/opencv.js/4.5.5/opencv.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .video-container, .results-container {
+            margin: 20px 0;
+        }
+        #videoElement, #canvasOutput {
+            width: 100%;
+            max-width: 640px;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            display: block;
+            margin: 0 auto;
+        }
+        #canvasOutput {
+            margin-top: 10px;
+        }
+        .button-container {
+            display: flex;
+            justify-content: center;
+            margin: 15px 0;
+            gap: 10px;
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #captureBtn {
+            background-color: #f44336;
+        }
+        #captureBtn:hover {
+            background-color: #d32f2f;
+        }
+        .grid-container {
+            margin-top: 20px;
+            overflow-x: auto;
+        }
+        .drum-grid {
+            border-collapse: collapse;
+            margin: 0 auto;
+        }
+        .drum-grid th, .drum-grid td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+        }
+        .drum-grid th {
+            background-color: #f2f2f2;
+            font-weight: normal;
+        }
+        .drum-grid .instrument {
+            background-color: #f2f2f2;
+            font-weight: bold;
+            text-align: right;
+            padding-right: 15px;
+        }
+        .filled {
+            background-color: #333;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .loading-spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 2s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            font-style: italic;
+            color: #666;
+        }
+        #exportSection {
+            margin-top: 20px;
+            display: none;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin-top: 10px;
+            font-family: monospace;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+    </style>
 </head>
 <body>
-<div id="loading" class="loading">
-<div class="spinner"></div>
-<div id="loadingStatus">Loading OpenCV.js...</div>
-</div>
-
-<div class="container">
-<h1>Drum Grid Detector</h1>
-<p>Point camera at a drum grid pattern to detect filled cells</p>
-
-<div>
-    <button id="startCamera" class="button" disabled>Start Camera</button>
-    <button id="captureImage" class="button" disabled>Capture Image</button>
-    <button id="processImage" class="button" disabled>Detect Filled Cells</button>
-    <button id="toggleDebug" class="button">Show Debug View</button>
-</div>
-
-<video id="video" autoplay playsinline style="display:none;"></video>
-<canvas id="canvas"></canvas>
-
-<div class="controls" id="controls">
-    <h3>Detection Settings</h3>
-    <div class="control-group">
-        <label for="cellThreshold">Cell Fill Threshold:</label>
-        <input type="range" id="cellThreshold" min="0.05" max="0.5" step="0.01" value="0.2">
-        <span id="cellThresholdValue">20%</span>
-    </div>
-    <div class="control-group">
-        <label for="mainThreshold">Binary Threshold:</label>
-        <input type="range" id="mainThreshold" min="80" max="200" step="5" value="120">
-        <span id="mainThresholdValue">120</span>
-    </div>
-    <button id="reprocess" class="button">Re-process with New Settings</button>
-</div>
-
-<div id="gridDisplay" class="grid-container">
-    <!-- Will be populated dynamically -->
-</div>
-
-<div id="results" style="margin-top: 20px; text-align: left;"></div>
-</div>
-
-<script>
-// DOM Elements
-const loadingDiv = document.getElementById('loading');
-const loadingStatus = document.getElementById('loadingStatus');
-const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const thresholdCanvas = document.getElementById('thresholdCanvas');
-const warpedCanvas = document.getElementById('warpedCanvas');
-const cellsCanvas = document.getElementById('cellsCanvas');
-const startCameraButton = document.getElementById('startCamera');
-const captureButton = document.getElementById('captureImage');
-const processButton = document.getElementById('processImage');
-const toggleDebugButton = document.getElementById('toggleDebug');
-const reprocessButton = document.getElementById('reprocess');
-const debugDiv = document.getElementById('debug');
-const gridDisplay = document.getElementById('gridDisplay');
-const resultsDiv = document.getElementById('results');
-
-// Threshold sliders
-const cellThresholdSlider = document.getElementById('cellThreshold');
-const cellThresholdValue = document.getElementById('cellThresholdValue');
-const mainThresholdSlider = document.getElementById('mainThreshold');
-const mainThresholdValue = document.getElementById('mainThresholdValue');
-
-// Update threshold display values on slider change
-cellThresholdSlider.addEventListener('input', () => {
-    const value = Math.round(cellThresholdSlider.value * 100);
-    cellThresholdValue.textContent = `${value}%`;
-});
-
-mainThresholdSlider.addEventListener('input', () => {
-    mainThresholdValue.textContent = mainThresholdSlider.value;
-});
-
-// Re-process image with new threshold settings
-reprocessButton.addEventListener('click', () => {
-    if (capturedImage) {
-        detectFilledCells(capturedImage);
-    } else {
-        alert('No image captured yet.');
-    }
-});
-
-// Toggle debug view
-toggleDebugButton.addEventListener('click', () => {
-    if (debugDiv.style.display === 'none') {
-        debugDiv.style.display = 'flex';
-        toggleDebugButton.textContent = 'Hide Debug View';
-    } else {
-        debugDiv.style.display = 'none';
-        toggleDebugButton.textContent = 'Show Debug View';
-    }
-});
-
-// Grid configuration
-const rowLabels = ['KICK', 'HAT', 'SNARE', 'CLAP', 'TOM', 'CRASH', 'COW', 'TAMB'];
-const numCols = 16;
-
-// Global variables
-let cvReady = false;
-let stream = null;
-let capturedImage = null;
-
-// Initialize grid display
-function initializeGrid() {
-    gridDisplay.innerHTML = '';
-    
-    // Add empty corner cell
-    const cornerCell = document.createElement('div');
-    gridDisplay.appendChild(cornerCell);
-    
-    // Add column headers
-    for (let i = 1; i <= numCols; i++) {
-        const header = document.createElement('div');
-        header.textContent = i;
-        header.style.textAlign = 'center';
-        header.style.fontWeight = 'bold';
-        gridDisplay.appendChild(header);
-    }
-    
-    // Add rows
-    for (let row = 0; row < rowLabels.length; row++) {
-        // Add row label
-        const rowLabel = document.createElement('div');
-        rowLabel.className = 'row-label';
-        rowLabel.textContent = rowLabels[row];
-        gridDisplay.appendChild(rowLabel);
+    <div class="container">
+        <h1>Drum Pattern Grid Detector</h1>
         
-        // Add cells for this row
-        for (let col = 0; col < numCols; col++) {
-            const cell = document.createElement('div');
-            cell.className = 'grid-cell';
-            cell.id = `cell-${row}-${col}`;
-            gridDisplay.appendChild(cell);
+        <div class="video-container">
+            <video id="videoElement" autoplay playsinline></video>
+            <canvas id="canvasOutput"></canvas>
+            <div class="button-container">
+                <button id="startBtn">Start Camera</button>
+                <button id="captureBtn" disabled>Capture Grid</button>
+            </div>
+            <div class="status" id="status">Camera not started</div>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="loading-spinner"></div>
+            <p>Processing image...</p>
+        </div>
+        
+        <div class="results-container">
+            <div class="grid-container" id="gridContainer"></div>
+            
+            <div id="exportSection">
+                <h3>Export Pattern</h3>
+                <div class="button-container">
+                    <button id="copyBtn">Copy to Clipboard</button>
+                </div>
+                <textarea id="exportData" readonly></textarea>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Wait for OpenCV.js to be loaded
+        function onOpenCvReady() {
+            document.getElementById('status').textContent = 'OpenCV.js loaded. Press "Start Camera" to begin.';
+            document.getElementById('startBtn').disabled = false;
         }
-    }
-}
 
-// Load OpenCV.js
-function loadOpenCV() {
-    return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.setAttribute('async', '');
-        script.setAttribute('type', 'text/javascript');
-        script.setAttribute('src', 'https://docs.opencv.org/4.7.0/opencv.js');
-        
-        script.onload = () => {
-            // Check if cv object is actually available
-            const checkInterval = setInterval(() => {
-                if (typeof cv !== 'undefined') {
-                    clearInterval(checkInterval);
-                    resolve();
+        // Variables
+        let video = document.getElementById('videoElement');
+        let canvasOutput = document.getElementById('canvasOutput');
+        let startButton = document.getElementById('startBtn');
+        let captureButton = document.getElementById('captureBtn');
+        let statusText = document.getElementById('status');
+        let gridContainer = document.getElementById('gridContainer');
+        let loadingElement = document.getElementById('loading');
+        let exportSection = document.getElementById('exportSection');
+        let exportData = document.getElementById('exportData');
+        let copyBtn = document.getElementById('copyBtn');
+
+        let streaming = false;
+        let stream = null;
+        let detectedGrid = [];
+        const instruments = ['KICK', 'HAT', 'SNARE', 'CLAP', 'TOM', 'CRASH', 'COW', 'TAMB'];
+        const steps = 16;
+
+        // Start camera
+        startButton.addEventListener('click', function() {
+            if (streaming) {
+                stopCamera();
+                startButton.textContent = 'Start Camera';
+                captureButton.disabled = true;
+                statusText.textContent = 'Camera stopped';
+            } else {
+                startCamera();
+            }
+        });
+
+        // Capture current frame
+        captureButton.addEventListener('click', function() {
+            captureFrame();
+        });
+
+        // Copy exported data to clipboard
+        copyBtn.addEventListener('click', function() {
+            exportData.select();
+            document.execCommand('copy');
+            alert('Pattern copied to clipboard!');
+        });
+
+        function startCamera() {
+            const constraints = {
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    facingMode: 'environment'
+                }
+            };
+
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then(function(s) {
+                    stream = s;
+                    video.srcObject = s;
+                    video.play();
+                    streaming = true;
+                    startButton.textContent = 'Stop Camera';
+                    captureButton.disabled = false;
+                    statusText.textContent = 'Camera active. Position the grid sheet in view and press "Capture Grid".';
+                })
+                .catch(function(err) {
+                    console.error("An error occurred: " + err);
+                    statusText.textContent = 'Error: Could not access camera. ' + err.message;
+                });
+        }
+
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => {
+                    track.stop();
+                });
+            }
+            video.srcObject = null;
+            streaming = false;
+        }
+
+        // Capture current frame and process it
+        function captureFrame() {
+            if (!streaming) return;
+
+            loadingElement.style.display = 'block';
+            statusText.textContent = 'Processing image...';
+            captureButton.disabled = true;
+
+            // Using setTimeout to allow the UI to update before processing
+            setTimeout(() => {
+                try {
+                    const ctx = canvasOutput.getContext('2d');
+                    canvasOutput.width = video.videoWidth;
+                    canvasOutput.height = video.videoHeight;
+                    ctx.drawImage(video, 0, 0, canvasOutput.width, canvasOutput.height);
+                    
+                    const imgData = ctx.getImageData(0, 0, canvasOutput.width, canvasOutput.height);
+                    
+                    // Process the image using OpenCV
+                    let src = cv.matFromImageData(imgData);
+                    processImage(src);
+                    
+                    src.delete();
+                } catch (err) {
+                    console.error('Error processing frame:', err);
+                    statusText.textContent = 'Error processing image: ' + err.message;
+                    loadingElement.style.display = 'none';
+                    captureButton.disabled = false;
                 }
             }, 100);
-            
-            // Set timeout if cv doesn't load within 15 seconds
-            setTimeout(() => {
-                clearInterval(checkInterval);
-                reject(new Error("OpenCV.js did not initialize in time"));
-            }, 15000);
-        };
-        
-        script.onerror = () => {
-            reject(new Error("Failed to load OpenCV.js"));
-        };
-        
-        document.body.appendChild(script);
-    });
-}
+        }
 
-// Start camera
-startCameraButton.addEventListener('click', async () => {
-    try {
-        stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-                facingMode: { ideal: 'environment' },
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            },
-            audio: false
-        });
-        
-        video.srcObject = stream;
-        video.style.display = 'block';
-        canvas.style.display = 'none';
-        startCameraButton.disabled = true;
-        captureButton.disabled = false;
-        
-        // Initialize grid
-        initializeGrid();
-        
-    } catch (err) {
-        console.error('Error accessing camera:', err);
-        alert(`Could not access camera: ${err.message}`);
-    }
-});
-
-// Capture image
-captureButton.addEventListener('click', () => {
-    if (!stream) return;
-    
-    const ctx = canvas.getContext('2d');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
-    video.style.display = 'none';
-    canvas.style.display = 'block';
-    captureButton.disabled = true;
-    processButton.disabled = false;
-    
-    // Create OpenCV image from canvas
-    capturedImage = cv.imread(canvas);
-});
-
-// Process image
-processButton.addEventListener('click', () => {
-    if (!capturedImage) {
-        alert('No image captured yet.');
-        return;
-    }
-    
-    try {
-        // Process the image to detect filled cells
-        detectFilledCells(capturedImage);
-    } catch (err) {
-        console.error('Error processing image:', err);
-        alert(`Error processing image: ${err.message}`);
-        resultsDiv.innerHTML = `<div style="color:red;">Error: ${err.message}</div>`;
-    }
-});
-
-// Function to find QR-code-like registration marks
-function findRegistrationMarks(src, binary) {
-    // 1. Find contours
-    let contours = new cv.MatVector();
-    let hierarchy = new cv.Mat();
-    cv.findContours(binary, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
-    
-    // 2. Find potential registration marks (square-like shapes)
-    let markers = [];
-    
-    for (let i = 0; i < contours.size(); i++) {
-        let contour = contours.get(i);
-        let area = cv.contourArea(contour);
-        
-        // Filter by area - adjust these thresholds based on your images
-        if (area > 100 && area < 5000) {
-            // Check if shape is square-like
-            let approx = new cv.Mat();
-            cv.approxPolyDP(contour, approx, 0.02 * cv.arcLength(contour, true), true);
-            
-            if (approx.rows >= 4 && approx.rows <= 8) {
-                // Calculate bounding rect to check aspect ratio
-                let rect = cv.boundingRect(contour);
-                let aspectRatio = rect.width / rect.height;
+        function processImage(src) {
+            try {
+                // Convert to grayscale
+                let gray = new cv.Mat();
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
                 
-                // Square-like shapes have aspect ratio close to 1
-                if (aspectRatio > 0.7 && aspectRatio < 1.3) {
-                    // Calculate center of the contour
-                    let moments = cv.moments(contour);
-                    if (moments.m00 !== 0) {
-                        let cx = moments.m10 / moments.m00;
-                        let cy = moments.m01 / moments.m00;
-                        
-                        markers.push({
-                            center: { x: cx, y: cy },
-                            rect: rect
+                // Apply threshold to get binary image
+                let binary = new cv.Mat();
+                cv.threshold(gray, binary, 150, 255, cv.THRESH_BINARY_INV);
+                
+                // Find contours
+                let contours = new cv.MatVector();
+                let hierarchy = new cv.Mat();
+                cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                
+                // Find the registration marks (the QR-code-like squares in corners)
+                let registrationMarks = findRegistrationMarks(contours, src.cols, src.rows);
+                
+                if (registrationMarks.length === 4) {
+                    // Sort registration marks in order: top-left, top-right, bottom-right, bottom-left
+                    sortRegistrationMarks(registrationMarks);
+                    
+                    // Apply perspective transform
+                    let transformedImage = applyPerspectiveTransform(gray, registrationMarks);
+                    
+                    // Detect the grid cells
+                    detectedGrid = detectGridCells(transformedImage);
+                    
+                    // Display the results
+                    displayResults(detectedGrid);
+                    
+                    transformedImage.delete();
+                    
+                    statusText.textContent = 'Grid detected and processed successfully!';
+                } else {
+                    displayError("Could not detect all 4 registration marks. Please try again with better lighting and alignment.");
+                }
+                
+                // Clean up
+                gray.delete();
+                binary.delete();
+                contours.delete();
+                hierarchy.delete();
+            } catch (err) {
+                console.error('Error in processImage:', err);
+                displayError("Error processing image: " + err.message);
+            } finally {
+                loadingElement.style.display = 'none';
+                captureButton.disabled = false;
+            }
+        }
+
+        function findRegistrationMarks(contours, width, height) {
+            const minSize = Math.min(width, height) * 0.02; // Min size of registration mark
+            const maxSize = Math.min(width, height) * 0.15; // Max size of registration mark
+            
+            let possibleMarks = [];
+            
+            for (let i = 0; i < contours.size(); ++i) {
+                const contour = contours.get(i);
+                const area = cv.contourArea(contour);
+                
+                // Skip if too small or too large
+                if (area < minSize * minSize || area > maxSize * maxSize) continue;
+                
+                // Check if it's approximately square
+                let perimeter = cv.arcLength(contour, true);
+                let approx = new cv.Mat();
+                cv.approxPolyDP(contour, approx, 0.04 * perimeter, true);
+                
+                if (approx.rows === 4) {
+                    let rect = cv.boundingRect(contour);
+                    let aspectRatio = rect.width / rect.height;
+                    
+                    // Check if it's square-ish (aspect ratio close to 1)
+                    if (aspectRatio > 0.8 && aspectRatio < 1.2) {
+                        let center = {
+                            x: rect.x + rect.width / 2,
+                            y: rect.y + rect.height / 2
+                        };
+                        possibleMarks.push({
+                            center: center,
+                            rect: rect,
+                            contour: contour
                         });
+                    }
+                }
+                
+                approx.delete();
+            }
+            
+            // If we found too many possible marks, filter by position (likely in the corners)
+            if (possibleMarks.length > 4) {
+                // Calculate distance from each corner
+                possibleMarks.forEach(mark => {
+                    mark.distTL = distanceSquared(mark.center, {x: 0, y: 0});
+                    mark.distTR = distanceSquared(mark.center, {x: width, y: 0});
+                    mark.distBR = distanceSquared(mark.center, {x: width, y: height});
+                    mark.distBL = distanceSquared(mark.center, {x: 0, y: height});
+                    mark.minDist = Math.min(mark.distTL, mark.distTR, mark.distBR, mark.distBL);
+                });
+                
+                // Sort by minimum distance to any corner
+                possibleMarks.sort((a, b) => a.minDist - b.minDist);
+                
+                // Take the top 4
+                possibleMarks = possibleMarks.slice(0, 4);
+            }
+            
+            return possibleMarks;
+        }
+
+        function distanceSquared(p1, p2) {
+            return Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2);
+        }
+
+        function sortRegistrationMarks(marks) {
+            // Calculate center of all marks
+            let centerX = marks.reduce((sum, mark) => sum + mark.center.x, 0) / marks.length;
+            let centerY = marks.reduce((sum, mark) => sum + mark.center.y, 0) / marks.length;
+            
+            // Categorize each mark as top-left, top-right, bottom-right, or bottom-left
+            marks.forEach(mark => {
+                mark.isLeft = mark.center.x < centerX;
+                mark.isTop = mark.center.y < centerY;
+            });
+            
+            // Sort based on their position
+            marks.sort((a, b) => {
+                if (a.isTop && !b.isTop) return -1;
+                if (!a.isTop && b.isTop) return 1;
+                if (a.isLeft && !b.isLeft) return -1;
+                if (!a.isLeft && b.isLeft) return 1;
+                return 0;
+            });
+            
+            // Now the marks should be in order: top-left, top-right, bottom-right, bottom-left
+            // Reorder to ensure they are in the correct sequence for perspective transform
+            let sortedMarks = [
+                marks.find(m => m.isTop && m.isLeft),    // top-left
+                marks.find(m => m.isTop && !m.isLeft),   // top-right
+                marks.find(m => !m.isTop && !m.isLeft),  // bottom-right
+                marks.find(m => !m.isTop && m.isLeft)    // bottom-left
+            ];
+            
+            // Replace the original array contents
+            marks.length = 0;
+            sortedMarks.forEach(mark => {
+                if (mark) marks.push(mark);
+            });
+        }
+
+        function applyPerspectiveTransform(src, marks) {
+            // Create source points from registration marks
+            let srcPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                marks[0].center.x, marks[0].center.y,  // top-left
+                marks[1].center.x, marks[1].center.y,  // top-right
+                marks[2].center.x, marks[2].center.y,  // bottom-right
+                marks[3].center.x, marks[3].center.y   // bottom-left
+            ]);
+            
+            // Target size for the transformed image (fixed ratio)
+            const targetWidth = 800;
+            const targetHeight = 600;
+            
+            // Create destination points (rectangle)
+            let dstPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                0, 0,                     // top-left
+                targetWidth, 0,           // top-right
+                targetWidth, targetHeight, // bottom-right
+                0, targetHeight           // bottom-left
+            ]);
+            
+            // Calculate perspective transform matrix
+            let M = cv.getPerspectiveTransform(srcPoints, dstPoints);
+            
+            // Apply perspective transformation
+            let dst = new cv.Mat();
+            cv.warpPerspective(src, dst, M, new cv.Size(targetWidth, targetHeight));
+            
+            // Clean up
+            srcPoints.delete();
+            dstPoints.delete();
+            M.delete();
+            
+            return dst;
+        }
+
+        function detectGridCells(img) {
+            // Grid dimensions
+            const numRows = 8;  // 8 instruments
+            const numCols = 16; // 16 time steps
+            
+            // Calculate cell dimensions
+            const imgWidth = img.cols;
+            const imgHeight = img.rows;
+            
+            // Estimate the grid area (excluding margins)
+            const gridMarginX = imgWidth * 0.1;
+            const gridMarginY = imgHeight * 0.15;
+            const gridWidth = imgWidth - 2 * gridMarginX;
+            const gridHeight = imgHeight - 2 * gridMarginY;
+            
+            const cellWidth = gridWidth / numCols;
+            const cellHeight = gridHeight / numRows;
+            
+            // Initialize result grid
+            let grid = Array(numRows).fill().map(() => Array(numCols).fill(false));
+            
+            // For each cell, check if it's filled
+            for (let row = 0; row < numRows; row++) {
+                for (let col = 0; col < numCols; col++) {
+                    // Calculate cell center
+                    const cellX = Math.floor(gridMarginX + col * cellWidth + cellWidth / 2);
+                    const cellY = Math.floor(gridMarginY + row * cellHeight + cellHeight / 2);
+                    
+                    // Get a sample region around the center
+                    const sampleRadius = Math.floor(Math.min(cellWidth, cellHeight) * 0.3);
+                    
+                    let filledPixels = 0;
+                    let totalPixels = 0;
+                    
+                    // Sample pixels in a square around the center
+                    for (let y = -sampleRadius; y <= sampleRadius; y++) {
+                        for (let x = -sampleRadius; x <= sampleRadius; x++) {
+                            const sX = cellX + x;
+                            const sY = cellY + y;
+                            
+                            // Ensure we're within image bounds
+                            if (sX >= 0 && sX < imgWidth && sY >= 0 && sY < imgHeight) {
+                                // Get pixel value (0-255, where 0 is black)
+                                const pixelValue = img.ucharPtr(sY, sX)[0];
+                                totalPixels++;
+                                
+                                // Consider dark pixels as filled (threshold at 100)
+                                if (pixelValue < 100) {
+                                    filledPixels++;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // If more than 30% of sampled pixels are dark, consider the cell filled
+                    const filledRatio = filledPixels / totalPixels;
+                    grid[row][col] = filledRatio > 0.3;
+                }
+            }
+            
+            return grid;
+        }
+
+        function displayResults(grid) {
+            // Create table
+            let table = document.createElement('table');
+            table.className = 'drum-grid';
+            
+            // Add header row with beat numbers
+            let headerRow = document.createElement('tr');
+            let cornerCell = document.createElement('th');
+            headerRow.appendChild(cornerCell);
+            
+            for (let i = 1; i <= steps; i++) {
+                let th = document.createElement('th');
+                th.textContent = i;
+                headerRow.appendChild(th);
+            }
+            
+            table.appendChild(headerRow);
+            
+            // Add rows for each instrument
+            for (let i = 0; i < instruments.length; i++) {
+                let row = document.createElement('tr');
+                
+                // Instrument name
+                let instrumentCell = document.createElement('td');
+                instrumentCell.className = 'instrument';
+                instrumentCell.textContent = instruments[i];
+                row.appendChild(instrumentCell);
+                
+                // Cells for each step
+                for (let j = 0; j < steps; j++) {
+                    let cell = document.createElement('td');
+                    if (grid[i][j]) {
+                        cell.className = 'filled';
+                    }
+                    row.appendChild(cell);
+                }
+                
+                table.appendChild(row);
+            }
+            
+            // Clear previous results and add new table
+            gridContainer.innerHTML = '';
+            gridContainer.appendChild(table);
+            
+            // Generate export data
+            generateExportData(grid);
+            
+            // Show export section
+            exportSection.style.display = 'block';
+        }
+
+        function generateExportData(grid) {
+            let data = {};
+            
+            // Create a pattern object
+            for (let i = 0; i < instruments.length; i++) {
+                data[instruments[i].toLowerCase()] = [];
+                
+                for (let j = 0; j < steps; j++) {
+                    if (grid[i][j]) {
+                        data[instruments[i].toLowerCase()].push(j + 1); // 1-based index for beats
                     }
                 }
             }
             
-            approx.delete();
+            // Convert to JSON for export
+            exportData.value = JSON.stringify(data, null, 2);
         }
-    }
-    
-    // Clean up
-    hierarchy.delete();
-    contours.delete();
-    
-    // 3. If we found at least 3 markers, sort them
-    if (markers.length >= 3) {
-        // Sort markers by position
-        markers.forEach(m => {
-            m.sum = m.center.x + m.center.y;    // Smallest for top-left
-            m.diff = m.center.x - m.center.y;   // Smallest for bottom-left
-        });
-        
-        // Get corners based on sum and difference of coordinates
-        markers.sort((a, b) => a.sum - b.sum);
-        let topLeft = markers[0];
-        
-        markers.sort((a, b) => b.sum - a.sum);
-        let bottomRight = markers[0];
-        
-        markers.sort((a, b) => a.diff - b.diff);
-        let bottomLeft = markers[0];
-        
-        markers.sort((a, b) => b.diff - a.diff);
-        let topRight = markers[0];
-        
-        // Return the four corners
-        return [topLeft, topRight, bottomLeft, bottomRight];
-    }
-    
-    // If not enough markers found, return empty array
-    return [];
-}
 
-// Detect filled cells in grid
-function detectFilledCells(inputImage) {
-    // Reset grid
-    document.querySelectorAll('.grid-cell').forEach(cell => {
-        cell.classList.remove('filled');
-    });
-    resultsDiv.innerHTML = '';
-    
-    // Step 1: Convert to grayscale
-    let gray = new cv.Mat();
-    cv.cvtColor(inputImage, gray, cv.COLOR_RGBA2GRAY);
-    
-    // Step 2: Apply blur to reduce noise
-    let blurred = new cv.Mat();
-    let ksize = new cv.Size(5, 5);
-    cv.GaussianBlur(gray, blurred, ksize, 0);
-    
-    // Step 3: Apply threshold to identify dark regions
-    let binary = new cv.Mat();
-    const mainThreshold = parseInt(mainThresholdSlider.value);
-    cv.adaptiveThreshold(blurred, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
-    
-    // Alternative threshold method in case adaptive doesn't work well
-    // cv.threshold(blurred, binary, mainThreshold, 255, cv.THRESH_BINARY_INV);
-    
-    // Show binary image in debug view
-    cv.imshow(thresholdCanvas, binary);
-    
-    // Step 4: Find registration marks
-    let markers = findRegistrationMarks(inputImage, binary);
-    
-    // Step 5: Apply perspective transform if we found enough markers
-    let warped = new cv.Mat();
-    let destWidth = 800;
-    let destHeight = 400;
-    
-    if (markers.length >= 3) {
-        // Create source points matrix from markers
-        let srcPoints = [];
-        
-        // We need exactly 4 points for perspective transform
-        if (markers.length === 3) {
-            // If only 3 markers found, estimate position of 4th corner
-            let tl = markers[0].center;
-            let tr = markers[1].center;
-            let bl = markers[2].center;
-            
-            // Estimate bottom-right as offset from other corners
-            let brx = tr.x + (bl.x - tl.x);
-            let bry = bl.y + (tr.y - tl.y);
-            
-            srcPoints = [tl.x, tl.y, tr.x, tr.y, bl.x, bl.y, brx, bry];
+        function displayError(message) {
+            statusText.textContent = message;
+            console.error(message);
+        }
+
+        // Initialize empty grid on load
+        function initializeEmptyGrid() {
+            let emptyGrid = Array(instruments.length).fill().map(() => Array(steps).fill(false));
+            displayResults(emptyGrid);
+        }
+
+        // Initialize when OpenCV is loaded
+        function onOpenCvReady() {
+            document.getElementById('status').textContent = 'OpenCV.js loaded. Press "Start Camera" to begin.';
+            document.getElementById('startBtn').disabled = false;
+            initializeEmptyGrid();
+        }
+
+        // Check if OpenCV.js is already loaded
+        if (typeof cv !== 'undefined') {
+            onOpenCvReady();
         } else {
-            // Use all 4 markers
-            srcPoints = [
-                markers[0].center.x, markers[0].center.y, // top-left
-                markers[1].center.x, markers[1].center.y, // top-right
-                markers[2].center.x, markers[2].center.y, // bottom-left
-                markers[3].center.x, markers[3].center.y  // bottom-right
-            ];
+            // If not, we'll wait for the script to load
+            var script = document.createElement('script');
+            script.setAttribute('async', '');
+            script.setAttribute('type', 'text/javascript');
+            script.addEventListener('load', onOpenCvReady);
+            script.addEventListener('error', function() {
+                document.getElementById('status').textContent = 'Failed to load OpenCV.js. Please check your internet connection.';
+            });
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/opencv.js/4.5.5/opencv.js';
+            document.head.appendChild(script);
         }
-        
-        // Create matrices for transformation
-        let srcPointsMat = cv.matFromArray(4, 1, cv.CV_32FC2, srcPoints);
-        let dstPointsMat = cv.matFromArray(4, 1, cv.CV_32FC2, [
-            0, 0,                  // top-left
-            destWidth, 0,          // top-right
-            0, destHeight,         // bottom-left
-            destWidth, destHeight  // bottom-right
-        ]);
-        
-        // Compute perspective transform
-        let transformMatrix = cv.getPerspectiveTransform(srcPointsMat, dstPointsMat);
-        
-        // Apply perspective transform
-        cv.warpPerspective(inputImage, warped, transformMatrix, new cv.Size(destWidth, destHeight));
-        
-        // Clean up
-        srcPointsMat.delete();
-        dstPointsMat.delete();
-        transformMatrix.delete();
-    } else {
-        // Not enough markers found, use original image
-        console.warn('Not enough markers found for perspective transform');
-        inputImage.copyTo(warped);
-        destWidth = warped.cols;
-        destHeight = warped.rows;
-    }
-    
-    // Show warped image in debug view
-    cv.imshow(warpedCanvas, warped);
-    
-    // Step 6: Convert warped image to grayscale and threshold for cell detection
-    let warpedGray = new cv.Mat();
-    cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
-    
-    let warpedBinary = new cv.Mat();
-    cv.threshold(warpedGray, warpedBinary, mainThreshold, 255, cv.THRESH_BINARY_INV);
-    
-    // Show cell detection image in debug view
-    cv.imshow(cellsCanvas, warpedBinary);
-    
-    // Step 7: Calculate cell dimensions
-    const cellWidth = Math.floor(destWidth / numCols);
-    const cellHeight = Math.floor(destHeight / rowLabels.length);
-    
-    // Step 8: Analyze each cell for filled state
-    let filledCells = [];
-    let cellsImg = warped.clone();
-    
-    for (let row = 0; row < rowLabels.length; row++) {
-        for (let col = 0; col < numCols; col++) {
-            // Calculate cell coordinates
-            const x = Math.floor(col * cellWidth);
-            const y = Math.floor(row * cellHeight);
-            
-            // Extract region of interest
-            let cellROI = warpedBinary.roi(new cv.Rect(x, y, cellWidth, cellHeight));
-            
-            // Count white pixels (dark in original)
-            let whitePixels = 0;
-            let totalPixels = cellROI.rows * cellROI.cols;
-            
-            // Calculate the mean value - higher means more white pixels
-            let meanVal = cv.mean(cellROI)[0];
-            let fillRatio = meanVal / 255;
-            
-            // Get threshold from slider
-            const fillThreshold = parseFloat(cellThresholdSlider.value);
-            
-            // If enough pixels are white, consider the cell filled
-            if (fillRatio > fillThreshold) {
-                const cellName = `${rowLabels[row]}-${col + 1}`;
-                filledCells.push({
-                    row: row,
-                    col: col,
-                    name: cellName,
-                    ratio: fillRatio
-                });
-                
-                // Mark cell as filled in UI
-                const cell = document.getElementById(`cell-${row}-${col}`);
-                if (cell) cell.classList.add('filled');
-                
-                // Draw rectangle on cells image for visualization
-                let color = new cv.Scalar(0, 255, 0, 255);
-                let pt1 = new cv.Point(x, y);
-                let pt2 = new cv.Point(x + cellWidth, y + cellHeight);
-                cv.rectangle(cellsImg, pt1, pt2, color, 2);
-            }
-            
-            cellROI.delete();
-        }
-    }
-    
-    // Show cells visualization in debug view
-    cv.imshow(cellsCanvas, cellsImg);
-    
-    // Display results
-    if (filledCells.length === 0) {
-        resultsDiv.innerHTML = '<p>No filled cells detected.</p>';
-    } else {
-        resultsDiv.innerHTML = '<h3>Detected Filled Cells:</h3>';
-        const list = document.createElement('ul');
-        filledCells.forEach(cell => {
-            const item = document.createElement('li');
-            item.textContent = `${cell.name} (${Math.round(cell.ratio * 100)}% filled)`;
-            list.appendChild(item);
-        });
-        resultsDiv.appendChild(list);
-        
-        console.log('Filled cells:', filledCells);
-    }
-    
-    // Clean up
-    gray.delete();
-    blurred.delete();
-    binary.delete();
-    warped.delete();
-    warpedGray.delete();
-    warpedBinary.delete();
-    cellsImg.delete();
-}
-
-// Initialize when page loads
-window.onload = function() {
-    // Size canvases for debug view
-    thresholdCanvas.width = warpedCanvas.width = cellsCanvas.width = 400;
-    thresholdCanvas.height = warpedCanvas.height = cellsCanvas.height = 200;
-    
-    loadOpenCV()
-        .then(() => {
-            cvReady = true;
-            startCameraButton.disabled = false;
-            loadingDiv.style.display = 'none';
-            console.log('OpenCV.js loaded successfully');
-        })
-        .catch(err => {
-            loadingStatus.textContent = `Failed to load OpenCV.js: ${err.message}`;
-            loadingDiv.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
-            console.error('OpenCV loading error:', err);
-        });
-};
-
-// Fallback for legacy OpenCV loading
-function onOpenCvReady() {
-    cvReady = true;
-    startCameraButton.disabled = false;
-    loadingDiv.style.display = 'none';
-    console.log('OpenCV.js loaded via legacy callback');
-}
-</script>
+    </script>
 </body>
 </html>
