@@ -581,6 +581,7 @@
                                 
                                 possibleMarkers.push({
                                     contour: contour,
+                                    contourIndex: i,  // Store the contour index
                                     center: { x: cx, y: cy },
                                     area: area,
                                     boundingRect: rect
@@ -613,7 +614,7 @@
             // Draw the selected markers
             let markerImg = src.clone();
             markers.forEach((marker, i) => {
-                cv.drawContours(markerImg, contours, contours.indexOf(marker.contour), 
+                cv.drawContours(markerImg, contours, marker.contourIndex, 
                                 new cv.Scalar(0, 0, 255, 255), 4);
                 // Draw marker number
                 cv.putText(markerImg, `${i+1}`, new cv.Point(marker.center.x, marker.center.y),
